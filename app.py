@@ -10,6 +10,10 @@ app = Flask(__name__)
 discord = DiscordInteractions(app)
 rd = redis.StrictRedis(host='localhost', port=6379, db=0)
 
+MSG_MATCH=""
+MSG_DISMATCH=""
+MSG_NOEXIST=""
+
 app.config["DISCORD_CLIENT_ID"] = environ["ID"]
 app.config["DISCORD_PUBLIC_KEY"] = environ["KEY"]
 app.config["DISCORD_CLIENT_SECRET"] = environ["SECRET"]
