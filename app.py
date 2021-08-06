@@ -1,10 +1,11 @@
 import pymysql
+
 from os import environ
 import redis
 from flask import Flask
 from flask_discord_interactions import DiscordInteractions, Response
 from dotenv import load_dotenv
-from requests import delete
+from requests import delete, put, patch
 
 load_dotenv()
 
@@ -25,24 +26,29 @@ app.config["DISCORD_CLIENT_ID"] = environ["ID"]
 app.config["DISCORD_PUBLIC_KEY"] = environ["KEY"]
 app.config["DISCORD_CLIENT_SECRET"] = environ["SECRET"]
 
+auth = {"Authorization": f'Bot {environ["TOKEN"]}'}
 
 @discord.command(annotations={"code": "6자리 숫자 인증코드를 띄어쓰기 없이 입력하세요."})
 def verify(ctx, code: str):
     "마인크래프트 계정을 인증합니다."
 
+    if "867576011961139200" not in ctx.author.roles:
+        return Response("이미 인증한 유저입니다. 인증된 마인크래프트 계정을 바꾸시고 싶으시면 인증 해제를 먼저 진행해주세요.", ephemeral=True)
+    if ctx.author.display_name == ctx.author.username:
+        return Response("디스코드 닉네임과 서버 닉네임이 같으면 인증할 수 없습니다. 디스코드 닉네임을 변경한 후 진행해주세요.", ephemeral=True)
     if len(code) != 6 or not code.isdigit():
         return Response(MSG_INVAILD, ephemeral=True)
-    
+
     if rd.exists(ctx.author.display_name):
         realcode = rd.hget(ctx.author.display_name, "code").decode("UTF-8")
         uuid = rd.hget(ctx.author.display_name, "UUID").decode("UTF-8")
         if realcode == str(code):
-            if "867576011961139200" not in ctx.author.roles:
-                return Response("이미 인증한 유저입니다. 인증된 마인크래프트 계정을 바꾸시고 싶으시면 인증 해제를 먼저 진행해주세요.", ephemeral=True)
-            with conn:
-                with conn.cursor() as cursor:
-                    cursor.execute(SQL_INSERT, (int(ctx.author.id), uuid))
-                conn.commit()
+            rd.delete(ctx.author.display_name)
+            conn.ping()
+            with conn.cursor() as cursor:
+                cursor.execute(SQL_INSERT, (int(ctx.author.id), uuid))
+            conn.commit()
+            delete(f"https://discord.com/api/guilds/330997213255827457/members/{ctx.author.id}/roles/867576011961139200", headers=auth)
             return Response(MSG_MATCH.format(mcnick=ctx.author.display_name), ephemeral=True)
         else:
             return Response(MSG_DISMATCH, ephemeral=True)
@@ -56,11 +62,12 @@ def unverify(ctx):
 
     if "867576011961139200" in ctx.author.roles:
         return Response("인증되지 않은 유저입니다. 인증된 유저만 인증을 해제할 수 있습니다.", ephemeral=True)
-
-    with conn:
-        with conn.cursor() as cursor:
-            cursor.execute(SQL_DELETE, (int(ctx.author.id),))
-            return Response("인증이 성공적으로 해제되었습니다.", ephemeral=True)
+    conn.ping()
+    with conn.cursor() as cursor:
+        cursor.execute(SQL_DELETE, (int(ctx.author.id),))
+        conn.commit()
+        put(f"https://discord.com/api/guilds/330997213255827457/members/{ctx.author.id}/roles/867576011961139200", headers=auth)
+        return Response("인증이 성공적으로 해제되었습니다.", ephemeral=True)
 
 
 discord.set_route("/interactions")
