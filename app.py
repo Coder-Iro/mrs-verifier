@@ -34,8 +34,7 @@ def verify(ctx, code: str):
 
     if "867576011961139200" not in ctx.author.roles:
         return Response("이미 인증한 유저입니다. 인증된 마인크래프트 계정을 바꾸시고 싶으시면 인증 해제를 먼저 진행해주세요.", ephemeral=True)
-    if ctx.author.display_name == ctx.author.username:
-        return Response("디스코드 닉네임과 서버 닉네임이 같으면 인증할 수 없습니다. 디스코드 닉네임을 변경한 후 진행해주세요.", ephemeral=True)
+
     if len(code) != 6 or not code.isdigit():
         return Response(MSG_INVAILD, ephemeral=True)
 
