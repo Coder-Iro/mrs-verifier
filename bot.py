@@ -56,7 +56,7 @@ class IroBot(commands.Bot):
     async def on_member_leave(self, member: discord.Member):
         async with self.pool.acquire() as conn:
             async with conn.cursor() as cur:
-                await cur.execute("") # TODO: member.id 삭제하는 쿼리
+                await cur.execute("DELETE FROM linked_account WHERE discord=%s", member.id)
 
 
 loop = asyncio.get_event_loop()
