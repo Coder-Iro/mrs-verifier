@@ -27,6 +27,8 @@ class IroBot(commands.Bot):
 
         self.working_guild = guild
         self.newbie_role = role
+        print(guild)
+        print(role)
 
     async def close(self):
         await self.pool.close()
@@ -59,14 +61,14 @@ class IroBot(commands.Bot):
     async def on_member_leave(self, member: discord.Member):
         async with await self.pool.Connection() as conn:
             async with conn.cursor() as cur:
-                await cur.execute("DELETE FROM linked_account WHERE discord=%s", member.id)
+                await cur.execute("DELETE * FROM linked_account WHERE discord=%s", member.id)
+            conn.commit()
 
 bot = IroBot(
     pool = tormysql.ConnectionPool(**config.SQL),
     command_prefix=config.COMMAND_PREFIX,
     intents=discord.Intents.all(),
-    activity=discord.Game(config.STATUS_MESSAGE),
-    help_command=None,
+    help_command=None
 )
 
 bot.run(config.TOKEN)
