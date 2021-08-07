@@ -44,6 +44,9 @@ class IroBot(commands.Bot):
     async def on_message(self, msg: discord.Message):
         if not isinstance(msg.author, discord.Member):
             return
+        
+        if msg.channel.id!=871587934128701480:
+            return # TODO: move this to config.py
 
         if self.newbie_role in msg.author.roles:
             await msg.delete()
