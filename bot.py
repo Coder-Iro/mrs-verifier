@@ -1,6 +1,6 @@
 import discord
 import asyncio
-import aiomysql
+import tormysql
 from discord.ext import commands
 
 # F*ck yaml
@@ -12,8 +12,8 @@ class IroBot(commands.Bot):
     """
     IroBot (100% written by Iro)
     """
-    
-    def __init__(self, pool: aiomysql.Pool, **options):
+
+    def __init__(self, pool: tormysql.ConnectionPool, **options):
         super().__init__(**options)
         self.pool = pool
         self.working_guild: discord.Guild
@@ -27,6 +27,9 @@ class IroBot(commands.Bot):
 
         self.working_guild = guild
         self.newbie_role = role
+
+    async def close(self):
+        await self.pool.close()
 
     # 1. 서버에 들어오면 미인증 역할을 준다
     async def on_member_join(self, member: discord.Member):
@@ -54,16 +57,12 @@ class IroBot(commands.Bot):
 
     # 4. 나간 유저 데이터 삭제
     async def on_member_leave(self, member: discord.Member):
-        async with self.pool.acquire() as conn:
+        async with await self.pool.Connection() as conn:
             async with conn.cursor() as cur:
                 await cur.execute("DELETE FROM linked_account WHERE discord=%s", member.id)
 
-
-loop = asyncio.get_event_loop()
-pool = loop.run_until_complete(aiomysql.create_pool(**config.SQL))
-
 bot = IroBot(
-    pool = pool,
+    pool = tormysql.ConnectionPool(**config.SQL),
     command_prefix=config.COMMAND_PREFIX,
     intents=discord.Intents.all(),
     activity=discord.Game(config.STATUS_MESSAGE),
