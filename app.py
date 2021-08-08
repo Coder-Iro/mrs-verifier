@@ -18,6 +18,7 @@ MSG_MATCH = "마인크래프트 계정 {mcnick} 이/가 성공적으로 인증�
 MSG_DISMATCH = "인증번호가 일치하지 않습니다."
 MSG_NOEXIST = "유효하지 않은 닉네임입니다. 인증 방법을 다시 한번 확인해주세요."
 MSG_INVAILD = "유효하지 않은 인증코드입니다. 인증코드는 띄어쓰기 없이 6자리 숫자로 입력해주세요."
+MSG_LIMIT = "현재 과부하로 인해 요청을 처리할 수 없습니다. 잠시 후 다시 시도해주세요."
 
 SQL_INSERT = "INSERT INTO linked_account(discord,mcuuid) values (%s, %s)"
 SQL_DELETE = "DELETE FROM linked_account WHERE discord=%s"
@@ -42,12 +43,14 @@ def verify(ctx, code: str):
         realcode = rd.hget(ctx.author.display_name, "code").decode("UTF-8")
         uuid = rd.hget(ctx.author.display_name, "UUID").decode("UTF-8")
         if realcode == str(code):
+            resp = delete(f"https://discord.com/api/guilds/330997213255827457/members/{ctx.author.id}/roles/867576011961139200", headers=auth)
+            if resp.status_code == 429:
+                return Response(MSG_LIMIT, ephemeral=True)
             rd.delete(ctx.author.display_name)
             conn.ping()
             with conn.cursor() as cursor:
                 cursor.execute(SQL_INSERT, (int(ctx.author.id), uuid))
             conn.commit()
-            delete(f"https://discord.com/api/guilds/330997213255827457/members/{ctx.author.id}/roles/867576011961139200", headers=auth)
             return Response(MSG_MATCH.format(mcnick=ctx.author.display_name), ephemeral=True)
         else:
             return Response(MSG_DISMATCH, ephemeral=True)
@@ -63,9 +66,11 @@ def unverify(ctx):
         return Response("인증되지 않은 유저입니다. 인증된 유저만 인증을 해제할 수 있습니다.", ephemeral=True)
     conn.ping()
     with conn.cursor() as cursor:
+        resp = put(f"https://discord.com/api/guilds/330997213255827457/members/{ctx.author.id}/roles/867576011961139200", headers=auth)
+        if resp.status_code == 429:
+                return Response(MSG_LIMIT, ephemeral=True)
         cursor.execute(SQL_DELETE, (int(ctx.author.id),))
         conn.commit()
-        put(f"https://discord.com/api/guilds/330997213255827457/members/{ctx.author.id}/roles/867576011961139200", headers=auth)
         return Response("인증이 성공적으로 해제되었습니다.", ephemeral=True)
 
 
