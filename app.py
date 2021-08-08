@@ -1,4 +1,5 @@
 import pymysql
+import re
 
 from os import environ
 import redis
@@ -23,6 +24,8 @@ MSG_LIMIT = "현재 과부하로 인해 요청을 처리할 수 없습니다. �
 SQL_INSERT = "INSERT INTO linked_account(discord,mcuuid) values (%s, %s)"
 SQL_DELETE = "DELETE FROM linked_account WHERE discord=%s"
 
+REGEX_CODE = re.compile(r'\d{3} ?\d{3}')
+
 app.config["DISCORD_CLIENT_ID"] = environ["ID"]
 app.config["DISCORD_PUBLIC_KEY"] = environ["KEY"]
 app.config["DISCORD_CLIENT_SECRET"] = environ["SECRET"]
@@ -36,9 +39,10 @@ def verify(ctx, code: str):
     if "867576011961139200" not in ctx.author.roles:
         return Response("이미 인증한 유저입니다. 인증된 마인크래프트 계정을 바꾸시고 싶으시면 인증 해제를 먼저 진행해주세요.", ephemeral=True)
 
-    if len(code) != 6 or not code.isdigit():
+    if not REGEX_CODE.match(code):
         return Response(MSG_INVAILD, ephemeral=True)
-
+    
+    code = code.replace(" ","")
     if rd.exists(ctx.author.display_name):
         realcode = rd.hget(ctx.author.display_name, "code").decode("UTF-8")
         uuid = rd.hget(ctx.author.display_name, "UUID").decode("UTF-8")
