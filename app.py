@@ -84,6 +84,12 @@ def unverify(ctx):
         conn.commit()
         return Response("인증이 성공적으로 해제되었습니다.", ephemeral=True)
 
+@discord.command()
+def update(ctx):
+    인증된 마인크래프트 계정 정보를 갱신합니다.
+    
+    if "867576011961139200" in ctx.author.roles:
+        return Response("인증되지 않은 유저입니다. 인증된 유저만 계정 정보를 새로고침 할 수 있습니다.", ephemeral=True)
 
 discord.set_route("/interactions")
 discord.update_slash_commands(guild_id="330997213255827457")
