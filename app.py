@@ -25,7 +25,7 @@ MSG_DUPLICATE = "마인크래프트 계정 {mcnick} 으로 인증된 계정이 �
 
 SQL_INSERT = "INSERT INTO linked_account(discord,mcuuid) values (%s, %s)"
 SQL_DELETE = "DELETE FROM linked_account WHERE discord=%s"
-SQL_CHECK = "SELECT * FROM linked_account WHERE mcuuid=s"
+SQL_CHECK = "SELECT * FROM linked_account WHERE mcuuid=%s"
 
 REGEX_CODE = re.compile(r'\d{3} ?\d{3}')
 
