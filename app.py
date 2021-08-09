@@ -21,7 +21,7 @@ MSG_NOEXIST = "유효하지 않은 닉네임입니다. 인증 방법을 다시 �
 MSG_INVAILD = "유효하지 않은 인증코드입니다. 인증코드는 띄어쓰기 없이 6자리 숫자로 입력해주세요."
 MSG_LIMIT = "현재 과부하로 인해 요청을 처리할 수 없습니다. 잠시 후 다시 시도해주세요."
 MSG_ALREADY = "이미 인증한 유저입니다. 인증된 마인크래프트 계정을 바꾸시고 싶으시면 인증 해제를 먼저 진행해주세요."
-MSG_DUPLICATE = "마인크래프트 계정 {mcnick} 으로 인증된 계정이 이미 존재합니다. 본인이 아니라면 문의사항에 문"
+MSG_DUPLICATE = "마인크래프트 계정 {mcnick} 으로 인증된 계정이 이미 존재합니다. 본인이 아니라면 고객센터에 문의해주세요."
 
 SQL_INSERT = "INSERT INTO linked_account(discord,mcuuid) values (%s, %s)"
 SQL_DELETE = "DELETE FROM linked_account WHERE discord=%s"
@@ -49,9 +49,10 @@ def verify(ctx, code: str):
     if rd.exists(ctx.author.display_name):
         realcode = rd.hget(ctx.author.display_name, "code").decode("UTF-8")
         uuid = rd.hget(ctx.author.display_name, "UUID").decode("UTF-8")
+        conn.ping()
         with conn.cursor() as cursor:
             if cursor.execute(SQL_CHECK, (uuid,)):
-                
+                return Response(MSG_DUPLICATE.format(mcnick=ctx.author.display_name), ephemeral=True)
         if realcode == str(code):
             resp = delete(f"https://discord.com/api/guilds/330997213255827457/members/{ctx.author.id}/roles/867576011961139200", headers=auth)
             if resp.status_code == 429:
