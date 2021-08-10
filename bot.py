@@ -38,7 +38,8 @@ class IroBot(commands.Bot):
     # 1. 서버에 들어오면 미인증 역할을 준다
     async def on_member_join(self, member: discord.Member):
         print(f"New member: {member} ({member.id})")
-        await member.add_roles(self.newbie_role)
+        if not member.bot:
+            await member.add_roles(self.newbie_role)
 
     # 2. 미인증 유저의 챗은 모두 삭제된다
     async def on_message(self, msg: discord.Message):
