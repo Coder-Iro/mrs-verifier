@@ -39,6 +39,7 @@ MSG_NOEXIST_NAME = "존재하지 않는 닉네임입니다. uuid를 찾고자 �
 SQL_INSERT = "INSERT INTO linked_account(discord,mcuuid) values (%s, %s)"
 SQL_DELETE = "DELETE FROM linked_account WHERE discord=%s"
 SQL_CHECK = "SELECT * FROM linked_account WHERE mcuuid=%s"
+SQL_GETUUID = "SELECT * FROM linked_account WHERE discord=%s"
 
 SQL_INSERT_BLACK = "INSERT INTO blacklist(mcuuid) values (%s)"
 SQL_DELETE_BLACK = "DELETE FROM blacklist WHERE mcuuid=%s"
@@ -94,7 +95,7 @@ def handle_unverify_yes(ctx):
     with conn.cursor() as cursor:
         resp = put(f"https://discord.com/api/guilds/330997213255827457/members/{ctx.author.id}/roles/867576011961139200", headers=auth)
         if resp.status_code == 429:
-                return Message(MSG_LIMIT, ephemeral=True)
+            return Message(MSG_LIMIT, ephemeral=True)
         cursor.execute(SQL_DELETE, (int(ctx.author.id),))
         conn.commit()
         return Message(
@@ -167,16 +168,27 @@ def unverify(ctx):
         ephemeral=True
     )
 
-@discord.command(default_permission=False, permissions=[
-    Permission(role="330997746083299329")
-])
+@discord.command()
 def update(ctx):
     "인증된 마인크래프트 계정 정보를 갱신합니다."
 
     if "867576011961139200" in ctx.author.roles:
-        return Message("인증되지 않은 유저입니다. 인증된 유저만 계정 정보를 새로고침 할 수 있습니다.", ephemeral=True)
+        return Message("인증되지 않은 유저입니다. 인증된 유저만 계정 정보를 갱신할 수 있습니다.", ephemeral=True)
 
-    return Message("개발 중인 명령어입니다. 아직 사용할 수 없습니다.", ephemeral=True)
+    conn.ping()
+    with conn.cursor() as cursor:
+        cursor.execute(SQL_GETUUID, (int(ctx.author.id),))
+        uuid = cursor.fetchone()['mcuuid']
+
+    name = MojangAPI.get_username(uuid)
+    if name == ctx.author.display_name:
+        return Message("갱신할 계정 정보가 없습니다.", ephemeral=True)
+    else:
+        resp = patch(f"https://discord.com/api/guilds/330997213255827457/members/{ctx.author.id}", headers=auth, json={'nick': name})
+        if resp.status_code == 204:
+            return Message("계정 정보를 성공적으로 갱신하였습니다.", ephemeral=True)
+        else:
+            return Message("계정 정보를 갱신할 수 없습니다. 여러 번 시도해도 계정 정보를 갱신할 수 없는 경우 고객센터에 문의해주세요.", ephemeral=True)
 
 @discord.command(annotations={"uuid": "차단할 마인크래프트 계정의 uuid를 대시(-)를 포함하여 정확하게 입력하세요."}, default_permission=False, permissions=[
     Permission(role="330997746083299329")
