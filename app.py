@@ -181,8 +181,11 @@ def update(ctx):
         uuid = cursor.fetchone()['mcuuid']
 
     name = MojangAPI.get_username(uuid)
+    if not name:
+        return Message("계정 정보가 존재하지 않거나 Mojang API에 연결할 수 없습니다. 잠시 후 다시 시도해주세요.", ephemeral=True)
+
     if name == ctx.author.display_name:
-        return Message("갱신할 계정 정보가 없습니다.", ephemeral=True)
+        return Message("갱신할 계정 정보가 없습니다. 이미 최신 정보입니다.", ephemeral=True)
     else:
         resp = patch(f"https://discord.com/api/guilds/330997213255827457/members/{ctx.author.id}", headers=auth, json={'nick': name})
         if resp.status_code == 204:
