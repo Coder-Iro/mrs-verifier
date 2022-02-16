@@ -5,7 +5,7 @@ import re
 from os import environ
 import redis
 from flask import Flask
-from flask_discord_interactions import DiscordInteractions, Message, Permission, ActionRow, Button, Embed, embed
+from flask_discord_interactions import DiscordInteractions, Message, Permission, ActionRow, Button, Embed, embed, Member
 from dotenv import load_dotenv
 from requests import delete, put, patch
 
@@ -168,6 +168,64 @@ def unverify(ctx):
         ephemeral=True
     )
 
+@discord.command(annotations={"user": "강제로 인증할 디스코드 유저를 입력하세요.", "uuid": "강제로 인증할 마인크래프트 계정의 uuid를 대시(-)를 포함하여 정확하게 입력하세요."}, default_permission=False, permissions=[
+    Permission(role="330997746083299329")
+])
+def force_verify(ctx, user: Member, uuid: str):
+    "특정 유저의 마인크래프트 계정을 강제로 인증합니다."
+
+    if "867576011961139200" not in user.roles:
+        return Message(MSG_ALREADY, ephemeral=True)
+
+    if not UUID_REGEX_CODE.match(uuid):
+        return Message(MSG_INVAILD_UUID, ephemeral=True)
+
+    profile = MojangAPI.get_profile(uuid)
+    if not profile:
+        return Message(MSG_INVAILD_UUID, ephemeral=True)
+    
+    conn.ping()
+    with conn.cursor() as cursor:
+        if cursor.execute(SQL_CHECK, (uuid,)):
+            return Message(MSG_DUPLICATE.format(mcnick=user.nick), ephemeral=True)
+        if cursor.execute(SQL_CHECK_BLACK, (uuid,)):
+            return Message(MSG_BANNED.format(mcnick=user.nick), ephemeral=True)
+        
+    resp = delete(f"https://discord.com/api/guilds/330997213255827457/members/{user.id}/roles/867576011961139200", headers=auth)
+    if resp.status_code == 429:
+        return Message(MSG_LIMIT, ephemeral=True)
+    
+    conn.ping()
+    with conn.cursor() as cursor:
+        cursor.execute(SQL_INSERT, (int(user.id), uuid))
+    conn.commit()
+
+    return Message(MSG_MATCH.format(mcnick=user.nick), ephemeral=True)
+
+@discord.command(annotations={"user": "강제로 인증을 해제할 디스코드 유저를 입력하세요."}, default_permission=False, permissions=[
+    Permission(role="330997746083299329")
+])
+def force_unverify(ctx, user: Member):
+    "특정 유저의 마인크래프트 계정 인증을 강제로 해제합니다."
+
+    if "867576011961139200" in user.roles:
+        return Message("인증되지 않은 유저입니다. 인증된 유저만 인증을 해제할 수 있습니다.", ephemeral=True)
+    
+    conn.ping()
+    with conn.cursor() as cursor:
+        if not cursor.execute(SQL_GETUUID, (int(user.id),)):
+            return Message("인증되지 않은 유저입니다. 인증된 유저만 인증을 해제할 수 있습니다.", ephemeral=True)
+
+    conn.ping()
+    with conn.cursor() as cursor:
+        resp = put(f"https://discord.com/api/guilds/330997213255827457/members/{user.id}/roles/867576011961139200", headers=auth)
+        if resp.status_code == 429:
+            return Message(MSG_LIMIT, ephemeral=True)
+        cursor.execute(SQL_DELETE, (int(user.id),))
+        conn.commit()
+    
+    return Message("마인크래프트 계정 `{mcnick}`의 계정 인증이 성공적으로 해제되었습니다.".format(mcnick=user.nick), ephemeral=True)
+
 @discord.command()
 def update(ctx):
     "인증된 마인크래프트 계정 정보를 갱신합니다."
@@ -237,6 +295,37 @@ def unban(ctx, uuid: str):
     conn.commit()
     return Message(MSG_DELETED_BLACK.format(mcnick=username, mcuuid=uuid), ephemeral=True)
 
+@discord.command()
+def status(ctx):
+    "MRS 인증 현황을 확인합니다."
+
+    conn.ping()
+    with conn.cursor() as cursor:
+        cursor.execute("SELECT COUNT(*) as cnt FROM linked_account")
+        verify_count = str(cursor.fetchone()['cnt']) + "명"
+        cursor.execute("SELECT COUNT(*) as cnt FROM blacklist")
+        black_count = str(cursor.fetchone()['cnt']) + "명"
+        return Message(embed=Embed(
+            author=embed.Author(
+                name="MRS 인증 현황",
+                icon_url=f"https://mrsmc.xyz/files/attach/images/1043/f145ecd08260228d9152dc5ae254a99e.png"
+            ),
+            color=15844367,
+            fields=[
+                embed.Field(
+                    name="인증된 유저",
+                    value=verify_count
+                ),
+                embed.Field(
+                    name="인증 차단된 유저",
+                    value=black_count
+                )
+            ],
+            footer=embed.Footer(
+                text=time.strftime(f"%Y.%m.%d. %H:%M:%S", time.localtime())
+            )
+        ))
+
 profile = discord.command_group("profile")
 
 @profile.command(annotations={"uuid": "마인크래프트 유저의 uuid를 대시(-)를 포함하여 정확하게 입력하세요."})
@@ -256,7 +345,7 @@ def uuid(ctx, uuid: str):
         if data['changed_to_at'] == 0:
             name_history = name_history + f"`{data['name']}` (계정 생성)\n"
         else:
-            changed_time = time.strftime(f"%Y.%m.%d %H:%M:%S", time.localtime(data['changed_to_at'] // 1000))
+            changed_time = time.strftime(f"%Y.%m.%d. %H:%M:%S", time.localtime(data['changed_to_at'] // 1000))
             name_history = name_history + f"`{data['name']}` ({changed_time})\n"
 
     if profile.cape_url:
@@ -267,11 +356,12 @@ def uuid(ctx, uuid: str):
     conn.ping()
     with conn.cursor() as cursor:
         if cursor.execute(SQL_CHECK, (uuid,)):
-            verify = "O"
+            id = cursor.fetchone()['discord']
+            verify = f"<@{id}>"
         elif cursor.execute(SQL_CHECK_BLACK, (uuid,)):
-            verify = "X (차단됨)"
+            verify = "서버에서 차단됨"
         else:
-            verify = "X"
+            verify = "인증되지 않음"
 
     return Message(embed=Embed(
         author=embed.Author(
@@ -283,6 +373,10 @@ def uuid(ctx, uuid: str):
         ),
         color=15844367,
         fields=[
+            embed.Field(
+                name="디스코드",
+                value=verify
+            ),
             embed.Field(
                 name="UUID",
                 value=uuid
@@ -300,15 +394,10 @@ def uuid(ctx, uuid: str):
                 name="망토",
                 value=cape_url,
                 inline=True
-            ),
-            embed.Field(
-                name="계정 인증",
-                value=verify,
-                inline=True
             )
         ],
         footer=embed.Footer(
-            text=time.strftime(f"%Y.%m.%d %H:%M:%S", time.localtime(profile.timestamp // 1000))
+            text=time.strftime(f"%Y.%m.%d. %H:%M:%S", time.localtime(profile.timestamp // 1000))
         )
     ))
 
@@ -329,7 +418,7 @@ def name(ctx, name: str):
         if data['changed_to_at'] == 0:
             name_history = name_history + f"`{data['name']}` (계정 생성)\n"
         else:
-            changed_time = time.strftime(f"%Y.%m.%d %H:%M:%S", time.localtime(data['changed_to_at'] // 1000))
+            changed_time = time.strftime(f"%Y.%m.%d. %H:%M:%S", time.localtime(data['changed_to_at'] // 1000))
             name_history = name_history + f"`{data['name']}` ({changed_time})\n"
 
     if profile.cape_url:
@@ -340,11 +429,12 @@ def name(ctx, name: str):
     conn.ping()
     with conn.cursor() as cursor:
         if cursor.execute(SQL_CHECK, (uuid,)):
-            verify = "O"
+            id = cursor.fetchone()['discord']
+            verify = f"<@{id}>"
         elif cursor.execute(SQL_CHECK_BLACK, (uuid,)):
-            verify = "X (차단됨)"
+            verify = "서버에서 차단됨"
         else:
-            verify = "X"
+            verify = "인증되지 않음"
 
     return Message(embed=Embed(
         author=embed.Author(
@@ -356,6 +446,10 @@ def name(ctx, name: str):
         ),
         color=15844367,
         fields=[
+            embed.Field(
+                name="디스코드",
+                value=verify
+            ),
             embed.Field(
                 name="UUID",
                 value=uuid
@@ -373,15 +467,10 @@ def name(ctx, name: str):
                 name="망토",
                 value=cape_url,
                 inline=True
-            ),
-            embed.Field(
-                name="계정 인증",
-                value=verify,
-                inline=True
             )
         ],
         footer=embed.Footer(
-            text=time.strftime(f"%Y.%m.%d %H:%M:%S", time.localtime(profile.timestamp // 1000))
+            text=time.strftime(f"%Y.%m.%d. %H:%M:%S", time.localtime(profile.timestamp // 1000))
         )
     ))
 
