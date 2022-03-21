@@ -7,10 +7,12 @@ import redis
 from flask import Flask
 from flask_discord_interactions import DiscordInteractions, Message, Permission, ActionRow, Button, Embed, embed, Member
 from dotenv import load_dotenv
-from requests import delete, put, patch
+from requests import delete, put, patch, get
+import json
+import time, datetime
 
 from mojang import MojangAPI
-import time
+from mcstatus import MinecraftServer
 
 load_dotenv()
 
@@ -18,6 +20,8 @@ app = Flask(__name__)
 discord = DiscordInteractions(app)
 conn = pymysql.connect(host="localhost", user="root", db="mcauth", cursorclass=pymysql.cursors.DictCursor)
 rd = redis.StrictRedis(host='localhost', port=6379, db=0)
+
+start_time = time.time()
 
 MSG_MATCH = "마인크래프트 계정 `{mcnick}` 이/가 성공적으로 인증되었습니다."
 MSG_DISMATCH = "인증번호가 일치하지 않습니다."
@@ -297,7 +301,7 @@ def unban(ctx, uuid: str):
 
 @discord.command()
 def status(ctx):
-    "MRS 인증 현황을 확인합니다."
+    "MRS 서버 현황을 확인합니다."
 
     conn.ping()
     with conn.cursor() as cursor:
@@ -305,26 +309,83 @@ def status(ctx):
         verify_count = str(cursor.fetchone()['cnt']) + "명"
         cursor.execute("SELECT COUNT(*) as cnt FROM blacklist")
         black_count = str(cursor.fetchone()['cnt']) + "명"
-        return Message(embed=Embed(
-            author=embed.Author(
-                name="MRS 인증 현황",
-                icon_url=f"https://mrsmc.xyz/files/attach/images/1043/f145ecd08260228d9152dc5ae254a99e.png"
+    
+    global start_time
+    uptime = str(datetime.timedelta(seconds=(time.time() - start_time))).split(".")[0]
+
+    resp = get(f"https://discord.com/api/guilds/330997213255827457/preview", headers=auth)
+    if resp.status_code == 429:
+        return Message(MSG_LIMIT, ephemeral=True)
+    resp_data = json.loads(resp.text)
+
+    try:
+        server_m = MinecraftServer.lookup("49.247.11.156:25565").status()
+        server_m_msg = f"{server_m.players.online}/{server_m.players.max}명 ({server_m.latency:.0f}ms)"
+    except:
+        server_m_msg = "오프라인"
+
+    try: 
+        server_n = MinecraftServer.lookup("175.118.105.244:31415").status()
+        server_n_msg = f"{server_n.players.online}/{server_n.players.max}명 ({server_n.latency:.0f}ms)"
+    except:
+        server_n_msg = "오프라인"
+
+    try:
+        server_verify = MinecraftServer.lookup("49.247.11.156:25577").status()
+        server_verify_msg = f"작동 중 ({server_n.latency:.0f}ms)"
+    except:
+        server_verify_msg = "오프라인"
+
+    return Message(embed=Embed(
+        author=embed.Author(
+            name=f"{resp_data['name']}",
+            icon_url=f"https://cdn.discordapp.com/icons/330997213255827457/{resp_data['icon']}.png"
+        ),
+        color=15844367,
+        fields=[
+            embed.Field(
+                name="전체",
+                value=f"{str(resp_data['approximate_member_count'])}명"
             ),
-            color=15844367,
-            fields=[
-                embed.Field(
-                    name="인증된 유저",
-                    value=verify_count
-                ),
-                embed.Field(
-                    name="인증 차단된 유저",
-                    value=black_count
-                )
-            ],
-            footer=embed.Footer(
-                text=time.strftime(f"%Y.%m.%d. %H:%M:%S", time.localtime())
+            embed.Field(
+                name="온라인",
+                value=f"{str(resp_data['approximate_presence_count'])}명",
+                inline=True
+            ),
+            embed.Field(
+                name="인증됨",
+                value=verify_count,
+                inline=True
+            ),
+            embed.Field(
+                name="인증 차단됨",
+                value=black_count,
+                inline=True
+            ),
+            embed.Field(
+                name="M서버",
+                value=server_m_msg,
+                inline=True
+            ),
+            embed.Field(
+                name="N²서버",
+                value=server_n_msg,
+                inline=True
+            ),
+            embed.Field(
+                name="인증서버",
+                value=server_verify_msg,
+                inline=True
+            ),
+            embed.Field(
+                name="인증봇 업타임",
+                value=uptime
             )
-        ))
+        ],
+        footer=embed.Footer(
+            text=time.strftime(f"%Y.%m.%d. %H:%M:%S", time.localtime())
+        )
+    ))
 
 profile = discord.command_group("profile")
 
