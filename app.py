@@ -5,11 +5,12 @@ import re
 from os import environ
 import redis
 from flask import Flask
-from flask_discord_interactions import DiscordInteractions, Message, Permission, ActionRow, Button, Embed, embed, Member
+from flask_discord_interactions import DiscordInteractions, Message, Permission, ActionRow, Button, Embed, embed, Member, CommandOptionType
 from dotenv import load_dotenv
 from requests import delete, put, patch, get
 import json
 import time, datetime
+import random
 
 from mojang import MojangAPI
 from mcstatus import MinecraftServer
@@ -39,6 +40,7 @@ MSG_NOEXIST_BLACK = "차단되지 않은 계정의 uuid입니다. 차단된 계�
 MSG_BANNED = "마인크래프트 계정 `{mcnick}` 은/는 차단된 계정입니다. 차단된 계정으로는 인증하실 수 없습니다."
 
 MSG_NOEXIST_NAME = "존재하지 않는 닉네임입니다. uuid를 찾고자 하는 유저의 마인크래프트 닉네임을 정확히 입력해주세요."
+MSG_NO_PERMISSION = "명령어를 사용할 권한이 없습니다."
 
 SQL_INSERT = "INSERT INTO linked_account(discord,mcuuid) values (%s, %s)"
 SQL_DELETE = "DELETE FROM linked_account WHERE discord=%s"
@@ -301,16 +303,18 @@ def unban(ctx, uuid: str):
 
 @discord.command()
 def status(ctx):
-    "MRS 서버 현황을 확인합니다."
+    "MRS 인증봇 현황을 확인합니다."
 
+    if "867576011961139200" in ctx.author.roles:
+        return Message(MSG_NO_PERMISSION, ephemeral=True)
+    
     conn.ping()
     with conn.cursor() as cursor:
         cursor.execute("SELECT COUNT(*) as cnt FROM linked_account")
         verify_count = str(cursor.fetchone()['cnt']) + "명"
         cursor.execute("SELECT COUNT(*) as cnt FROM blacklist")
         black_count = str(cursor.fetchone()['cnt']) + "명"
-    
-    global start_time
+
     uptime = str(datetime.timedelta(seconds=(time.time() - start_time))).split(".")[0]
 
     resp = get(f"https://discord.com/api/guilds/330997213255827457/preview", headers=auth)
@@ -318,39 +322,13 @@ def status(ctx):
         return Message(MSG_LIMIT, ephemeral=True)
     resp_data = json.loads(resp.text)
 
-    try:
-        server_m = MinecraftServer.lookup("49.247.11.156:25565").status()
-        server_m_msg = f"{server_m.players.online}/{server_m.players.max}명 ({server_m.latency:.0f}ms)"
-    except:
-        server_m_msg = "오프라인"
-
-    try: 
-        server_n = MinecraftServer.lookup("175.118.105.244:31415").status()
-        server_n_msg = f"{server_n.players.online}/{server_n.players.max}명 ({server_n.latency:.0f}ms)"
-    except:
-        server_n_msg = "오프라인"
-
-    try:
-        server_verify = MinecraftServer.lookup("49.247.11.156:25577").status()
-        server_verify_msg = f"작동 중 ({server_n.latency:.0f}ms)"
-    except:
-        server_verify_msg = "오프라인"
-
     return Message(embed=Embed(
-        author=embed.Author(
-            name=f"{resp_data['name']}",
-            icon_url=f"https://cdn.discordapp.com/icons/330997213255827457/{resp_data['icon']}.png"
-        ),
+        title="MRS 인증봇 현황",
         color=15844367,
         fields=[
             embed.Field(
                 name="전체",
                 value=f"{str(resp_data['approximate_member_count'])}명"
-            ),
-            embed.Field(
-                name="온라인",
-                value=f"{str(resp_data['approximate_presence_count'])}명",
-                inline=True
             ),
             embed.Field(
                 name="인증됨",
@@ -363,21 +341,6 @@ def status(ctx):
                 inline=True
             ),
             embed.Field(
-                name="M서버",
-                value=server_m_msg,
-                inline=True
-            ),
-            embed.Field(
-                name="N²서버",
-                value=server_n_msg,
-                inline=True
-            ),
-            embed.Field(
-                name="인증서버",
-                value=server_verify_msg,
-                inline=True
-            ),
-            embed.Field(
                 name="인증봇 업타임",
                 value=uptime
             )
@@ -387,11 +350,108 @@ def status(ctx):
         )
     ))
 
+@discord.command(options=[
+    {
+        "name": "ip",
+        "description": "마인크래프트 서버의 IP 주소를 정확하게 입력해주세요.",
+        "type": CommandOptionType.STRING,
+        "required": False
+    }
+])
+def query(ctx, ip: str=None):
+    "IP 주소로 마인크래프트 서버 정보를 확인합니다. IP 주소를 입력하지 않으면 MRS 서버의 정보를 확인합니다."
+
+    if "867576011961139200" in ctx.author.roles:
+        return Message(MSG_NO_PERMISSION, ephemeral=True)
+
+    if not ip:
+        try:
+            server_m = MinecraftServer.lookup("49.247.11.156:25565").status()
+            server_m_msg = f"{server_m.players.online}/{server_m.players.max}명 ({server_m.latency:.1f}ms)"
+        except:
+            server_m_msg = "오프라인"
+
+        try: 
+            server_n = MinecraftServer.lookup("116.35.210.227:17401").status()
+            server_n_msg = f"{server_n.players.online}/{server_n.players.max}명 ({server_n.latency:.1f}ms)"
+        except:
+            server_n_msg = "오프라인"
+
+        try:
+            server_verify = MinecraftServer.lookup("49.247.11.156:25577").status()
+            server_verify_msg = f"작동 중 ({server_n.latency:.1f}ms)"
+        except:
+            server_verify_msg = "오프라인"
+
+        return Message(embed=Embed(
+            title="MRS 서버 정보",
+            color=15844367,
+            fields=[
+                embed.Field(
+                    name="M서버",
+                    value=f"mrsmc.xyz\n{server_m_msg}"
+                ),
+                embed.Field(
+                    name="N²서버",
+                    value=f"n.mrsmc.xyz\n{server_n_msg}"
+                ),
+                embed.Field(
+                    name="인증서버",
+                    value=f"verify.mrsmc.xyz\n{server_verify_msg}"
+                )
+            ],
+            footer=embed.Footer(
+                text=time.strftime(f"%Y.%m.%d. %H:%M:%S", time.localtime())
+            )
+        ))
+    else:
+        try:
+            server = MinecraftServer.lookup(ip).status()
+        except:
+            return Message("서버 정보를 불러올 수 없습니다.", ephemeral=True)
+        
+        return Message(embed=Embed(
+            title="마인크래프트 서버 정보",
+            color=15844367,
+            fields=[
+                embed.Field(
+                    name="서버 주소",
+                    value=ip
+                ),
+                embed.Field(
+                    name="MOTD",
+                    value=server.description
+                ),
+                embed.Field(
+                    name="버전",
+                    value=server.version.name,
+                    inline=True
+                ),
+                embed.Field(
+                    name="접속자 수",
+                    value=f"{server.players.online}/{server.players.max}명",
+                    inline=True
+                ),
+                embed.Field(
+                    name="지연 시간",
+                    value=f"{server.latency:.1f}ms",
+                    inline=True
+                )
+            ],
+            footer=embed.Footer(
+                text=time.strftime(f"%Y.%m.%d. %H:%M:%S", time.localtime())
+            )
+        ))
+
+
 profile = discord.command_group("profile")
 
 @profile.command(annotations={"uuid": "마인크래프트 유저의 uuid를 대시(-)를 포함하여 정확하게 입력하세요."})
 def uuid(ctx, uuid: str):
     "uuid로 마인크래프트 프로필을 조회합니다."
+
+    if "867576011961139200" in ctx.author.roles:
+        return Message(MSG_NO_PERMISSION, ephemeral=True)
 
     if not UUID_REGEX_CODE.match(uuid):
         return Message(MSG_INVAILD_UUID, ephemeral=True)
@@ -465,7 +525,10 @@ def uuid(ctx, uuid: str):
 @profile.command(annotations={"name": "마인크래프트 닉네임을 정확하게 입력하세요."})
 def name(ctx, name: str):
     "닉네임으로 마인크래프트 프로필을 조회합니다."
-
+    
+    if "867576011961139200" in ctx.author.roles:
+        return Message(MSG_NO_PERMISSION, ephemeral=True)
+    
     uuid = MojangAPI.get_uuid(name)
 
     if not uuid:
