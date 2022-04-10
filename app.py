@@ -10,7 +10,6 @@ from dotenv import load_dotenv
 from requests import delete, put, patch, get
 import json
 import time, datetime
-import random
 
 from mojang import MojangAPI
 from mcstatus import MinecraftServer
