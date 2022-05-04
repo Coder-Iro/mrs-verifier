@@ -1,37 +1,40 @@
 import interactions
 
+import tormysql
 import re
 import time, datetime
 
 from os import environ
 from dotenv import load_dotenv
 
-
 from mojang import MojangAPI
-import aiomojang
 from mcstatus import JavaServer
-
 
 
 load_dotenv()
 
-START_TIME = time.time()
-
-EMBED_COLOR = 15844367
 GUILD_ID = 330997213255827457
-GUILD_NAME = "Mystic Red Space"
+EMBED_COLOR = 15844367
+
+SQL = {
+    'host': "localhost",
+    'port': 3306,
+    'user': "root",
+    'passwd': "",
+    'db': "mcauth",
+}
 
 MSG_INVAILD_UUID = "유효하지 않은 uuid입니다. 32자리의 uuid를 대시(-)를 포함하여 정확히 입력해주세요."
 MSG_INVALID_NAME = "유효하지 않은 닉네임입니다. 마인크래프트 닉네임을 정확히 입력해주세요."
 
 UUID_REGEX_CODE = re.compile(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}')
 
-
-def get_timestamp():
-    return time.strftime(f"%Y.%m.%d. %H:%M:%S", time.localtime())
-
-
+start_time = time.time()
+pool = tormysql.ConnectionPool(**SQL)
 bot = interactions.Client(token=environ["TOKEN"], intents=interactions.Intents.ALL)
+
+def get_footer():
+    return time.strftime(f"%Y.%m.%d. %H:%M:%S", time.localtime()) + " [개발 버전]"
 
 @bot.command(
     name="status",
@@ -39,7 +42,21 @@ bot = interactions.Client(token=environ["TOKEN"], intents=interactions.Intents.A
     scope=GUILD_ID
 )
 async def status(ctx: interactions.CommandContext):
-    pass
+    uptime = str(datetime.timedelta(seconds=(time.time() - start_time))).split(".")[0]
+
+    await ctx.send(embeds=interactions.Embed(
+        title="MRS 인증봇 현황",
+        color=EMBED_COLOR,
+        fields=[
+            interactions.EmbedField(
+                name="인증봇 업타임",
+                value=uptime
+            )
+        ],
+        footer=interactions.EmbedFooter(
+            text=get_footer()
+        )
+    ))
 
 @bot.command(
     name="query",
@@ -90,7 +107,7 @@ async def query(ctx: interactions.CommandContext, ip: str = None):
             )
         ],
         footer=interactions.EmbedFooter(
-            text=get_timestamp()
+            text=get_footer()
         )
     ))
 
@@ -154,37 +171,37 @@ async def profile(ctx: interactions.CommandContext, sub_command: str, uuid: str 
         cape = f"없음"
     
     await ctx.send(embeds=interactions.Embed(
-            author=interactions.EmbedAuthor(
-                name=f"{profile.name}",
-                icon_url=f"https://mc-heads.net/head/{uuid}"
+        author=interactions.EmbedAuthor(
+            name=f"{profile.name}",
+            icon_url=f"https://mc-heads.net/head/{uuid}"
+        ),
+        thumbnail=interactions.EmbedImageStruct(
+            url=f"https://mc-heads.net/body/{uuid}"
+        ),
+        color=EMBED_COLOR,
+        fields=[
+            interactions.EmbedField(
+                name="UUID",
+                value=uuid
             ),
-            thumbnail=interactions.EmbedImageStruct(
-                url=f"https://mc-heads.net/body/{uuid}"
+            interactions.EmbedField(
+                name="닉네임 변경 내역",
+                value=name_history
             ),
-            color=EMBED_COLOR,
-            fields=[
-                interactions.EmbedField(
-                    name="UUID",
-                    value=uuid
-                ),
-                interactions.EmbedField(
-                    name="닉네임 변경 내역",
-                    value=name_history
-                ),
-                interactions.EmbedField(
-                    name=f"스킨 ({profile.skin_model})",
-                    value=f"[바로가기]({profile.skin_url})",
-                    inline=True
-                ),
-                interactions.EmbedField(
-                    name="망토",
-                    value=cape,
-                    inline=True
-                )
-            ],
-            footer=interactions.EmbedFooter(
-                text=get_timestamp()
+            interactions.EmbedField(
+                name=f"스킨 ({profile.skin_model})",
+                value=f"[바로가기]({profile.skin_url})",
+                inline=True
+            ),
+            interactions.EmbedField(
+                name="망토",
+                value=cape,
+                inline=True
             )
-        ))
+        ],
+        footer=interactions.EmbedFooter(
+            text=get_footer()
+        )
+    ))
 
 bot.start()
