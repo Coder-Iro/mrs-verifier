@@ -95,7 +95,8 @@ async def verify_response(ctx: interactions.CommandContext, mcnick: str, code: s
                 if await cur.execute(SQL_CHECK_BLACK, (uuid, )):
                     return await ctx.send(MSG_BANNED.format(mcnick=mcnick), ephemeral=True)
         if realcode == code:
-            await ctx.author.modify(nick=mcnick)
+            await ctx.author.modify(nick=mcnick, guild_id=GUILD_ID)
+            await ctx.author.remove_role(role=NEWBIE_ROLE_ID, guild_id=GUILD_ID)
             async with await pool.Connection() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute(SQL_INSERT, (int(ctx.author.id), uuid))
@@ -121,7 +122,7 @@ async def unverify(ctx: interactions.CommandContext):
                 label="인증을 해제하시려면 본인의 닉네임을 정확히 입력해주세요.",
                 custom_id="check_msg",
                 required=True,
-                placeholder=ctx.author.nick
+                placeholder=ctx.author.nick if ctx.author.nick else ctx.author.user.username
             )
         ]
     )
@@ -130,10 +131,11 @@ async def unverify(ctx: interactions.CommandContext):
 
 @bot.modal("modal_unverify")
 async def unverify_response(ctx: interactions.CommandContext, check_msg: str):
-    if not check_msg == ctx.author.nick:
+    nick = ctx.author.nick if ctx.author.nick else ctx.author.user.username
+    if not check_msg == nick:
         return await ctx.send(MSG_UNVERIFY_FAIL, ephemeral=True)
     
-    await ctx.author.remove_role(role=NEWBIE_ROLE_ID)
+    await ctx.author.add_role(role=NEWBIE_ROLE_ID, guild_id=GUILD_ID)
     async with await pool.Connection() as conn:
         async with conn.cursor() as cur:
             await cur.execute(SQL_DELETE, (int(ctx.author.id), ))
@@ -268,11 +270,8 @@ async def profile(ctx: interactions.CommandContext, sub_command: str, uuid: str 
         else:
             changed_time = time.strftime(f"%Y.%m.%d. %H:%M:%S", time.localtime(data['changed_to_at'] // 1000))
         name_history = name_history + f"`{data['name']}` ({changed_time})\n"
-    
-    if profile.cape_url:
-        cape = f"[바로가기]({profile.cape_url})"
-    else:
-        cape = f"없음"
+
+    cape = f"[바로가기]({profile.cape_url})" if profile.cape_url else "없음"
     
     await ctx.send(embeds=interactions.Embed(
         author=interactions.EmbedAuthor(
