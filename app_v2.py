@@ -17,15 +17,15 @@ EMBED_COLOR = config.EMBED_COLOR
 SQL = config.SQL
 REDIS = config.REDIS
 
-MSG_MATCH = "마인크래프트 계정 `{mcnick}` 이/가 성공적으로 인증되었습니다."
-MSG_DISMATCH = "인증번호가 일치하지 않습니다."
+MSG_VERIFY_SUCCESS = "마인크래프트 계정 `{mcnick}` 이/가 성공적으로 인증되었습니다."
+MSG_VERIFY_FAIL = "인증번호가 일치하지 않습니다."
 
-MSG_UNVERIFY_FAIL = "입력한 문구가 올바르지 않습니다. 계정 인증 해제를 취소합니다."
 MSG_UNVERIFY_SUCCESS = "계정 인증이 성공적으로 해제되었습니다."
+MSG_UNVERIFY_FAIL = "입력한 문구가 올바르지 않습니다. 계정 인증 해제를 취소합니다."
 
-MSG_INVAILD_UUID = "유효하지 않은 uuid입니다. 32자리의 uuid를 대시(-)를 포함하여 정확히 입력해주세요."
+MSG_INVALID_UUID = "유효하지 않은 uuid입니다. 32자리의 uuid를 대시(-)를 포함하여 정확히 입력해주세요."
 MSG_INVALID_NAME = "유효하지 않은 닉네임입니다. 마인크래프트 닉네임을 정확히 입력해주세요."
-MSG_INVAILD_CODE = "유효하지 않은 인증코드입니다. 인증코드는 띄어쓰기 없이 6자리 숫자로 입력해주세요."
+MSG_INVALID_CODE = "유효하지 않은 인증코드입니다. 인증코드는 띄어쓰기 없이 6자리 숫자로 입력해주세요."
 
 MSG_DUPLICATE = "마인크래프트 계정 `{mcnick}` 은 이미 인증된 계정입니다. 본인이 인증한 것이 아니라면 고객센터에 문의해주세요."
 MSG_BANNED = "마인크래프트 계정 `{mcnick}` 은/는 차단된 계정입니다. 차단된 계정으로는 인증하실 수 없습니다."
@@ -83,7 +83,7 @@ async def verify(ctx: interactions.CommandContext):
 @bot.modal("modal_verify")
 async def verify_response(ctx: interactions.CommandContext, mcnick: str, code: str):
     if not REGEX_CODE.match(code):
-        return await ctx.send(MSG_INVAILD_CODE, ephemeral=True)
+        return await ctx.send(MSG_INVALID_CODE, ephemeral=True)
     
     if rd.exists(mcnick):
         realcode = rd.hget(mcnick, "code").decode("UTF-8")
@@ -101,9 +101,9 @@ async def verify_response(ctx: interactions.CommandContext, mcnick: str, code: s
                 async with conn.cursor() as cur:
                     await cur.execute(SQL_INSERT, (int(ctx.author.id), uuid))
                 await conn.commit()
-            await ctx.send(MSG_MATCH.format(mcnick=mcnick), ephemeral=True)
+            await ctx.send(MSG_VERIFY_SUCCESS.format(mcnick=mcnick), ephemeral=True)
         else:
-            await ctx.send(MSG_DISMATCH, ephemeral=True)
+            await ctx.send(MSG_VERIFY_FAIL, ephemeral=True)
     else:
         await ctx.send(MSG_INVALID_NAME, ephemeral=True)
 
@@ -114,7 +114,7 @@ async def verify_response(ctx: interactions.CommandContext, mcnick: str, code: s
 )
 async def unverify(ctx: interactions.CommandContext):
     modal = interactions.Modal(
-        title="MRS 계정 인증 해제",
+        title="MRS 마인크래프트 계정 인증 해제",
         custom_id="modal_unverify",
         components=[
             interactions.TextInput(
@@ -141,7 +141,7 @@ async def unverify_response(ctx: interactions.CommandContext, check_msg: str):
             await cur.execute(SQL_DELETE, (int(ctx.author.id), ))
         await conn.commit()
     await ctx.send(MSG_UNVERIFY_SUCCESS, ephemeral=True)
-
+    
 @bot.command(
     name="status",
     description="MRS 인증봇 현황을 확인합니다.",
@@ -254,7 +254,7 @@ async def profile(ctx: interactions.CommandContext, sub_command: str, uuid: str 
     if sub_command == "uuid":
         profile = MojangAPI.get_profile(uuid)
         if not UUID_REGEX_CODE.match(uuid) or not profile:
-            return await ctx.send(MSG_INVAILD_UUID, ephemeral=True)
+            return await ctx.send(MSG_INVALID_UUID, ephemeral=True)
     elif sub_command == "name":
         uuid = MojangAPI.get_uuid(name)
         if not uuid:
