@@ -153,37 +153,30 @@ async def unverify_response(ctx: interactions.CommandContext, check_msg: str):
     await ctx.send(MSG_UNVERIFY_SUCCESS.format(mcnick=nick), ephemeral=True)
 
 @bot.command(
-    type=interactions.ApplicationCommandType.USER,
-    name="강제 계정 인증",
-    scope=GUILD_ID
+    name="force_verify",
+    description="특정 유저의 마인크래프트 계정을 강제로 인증합니다.",
+    scope=GUILD_ID,
+    options=[
+        interactions.Option(
+            name="user",
+            description="강제로 인증할 디스코드 유저를 입력하세요.",
+            type=interactions.OptionType.USER,
+            required=True
+        ),
+        interactions.Option(
+            name="mcnick",
+            description="강제로 인증할 마인크래프트 계정의 닉네임을 정확하게 입력하세요.",
+            type=interactions.OptionType.STRING,
+            required=True
+        )
+    ]
 )
-async def force_verify(ctx: interactions.CommandContext):
-    modal = interactions.Modal(
-        title="MRS 마인크래프트 계정 강제 인증",
-        custom_id="modal_force_verify",
-        components=[
-            interactions.TextInput(
-                style=interactions.TextStyleType.SHORT,
-                label="마인크래프트 닉네임",
-                custom_id="mcnick",
-                required=True,
-                min_length=3,
-                max_length=16
-            )
-        ]
-    )
-    
-    await ctx.popup(modal)
-    
-@bot.modal("modal_force_verify")
-async def force_verify_response(ctx: interactions.CommandContext, mcnick: str):
+async def force_verify(ctx: interactions.CommandContext, user: interactions.Member, mcnick: str):
     uuid = MojangAPI.get_uuid(mcnick)
     if not uuid:
         return await ctx.send(MSG_INVALID_NAME, ephemeral=True)
     uuid = '-'.join([uuid[:8], uuid[8:12], uuid[12:16], uuid[16:20], uuid[20:]])
-    
-    profile = MojangAPI.get_profile(uuid)
-    mcnick = profile.name
+    mcnick = MojangAPI.get_username(uuid)
     
     async with await pool.Connection() as conn:
         async with conn.cursor() as cur:
@@ -192,48 +185,36 @@ async def force_verify_response(ctx: interactions.CommandContext, mcnick: str):
             if await cur.execute(SQL_CHECK_BLACK, (uuid, )):
                 return await ctx.send(MSG_BANNED.format(mcnick=mcnick), ephemeral=True)
             
-    await ctx.target.modify(nick=mcnick, guild_id=GUILD_ID)
-    await ctx.target.remove_role(role=NEWBIE_ROLE_ID, guild_id=GUILD_ID)
+    await user.modify(nick=mcnick, guild_id=GUILD_ID)
+    await user.remove_role(role=NEWBIE_ROLE_ID, guild_id=GUILD_ID)
     async with await pool.Connection() as conn:
         async with conn.cursor() as cur:
-            await cur.execute(SQL_INSERT, (int(ctx.target.id), uuid))
+            await cur.execute(SQL_INSERT, (int(user.id), uuid))
         await conn.commit()
     await ctx.send(MSG_VERIFY_SUCCESS.format(mcnick=mcnick), ephemeral=True)
     
 @bot.command(
-    type=interactions.ApplicationCommandType.USER,
-    name="강제 계정 인증 해제",
-    scope=GUILD_ID
+    name="force_unverify",
+    description="특정 유저의 마인크래프트 계정 인증을 강제로 해제합니다.",
+    scope=GUILD_ID,
+    options=[
+        interactions.Option(
+            name="user",
+            description="강제로 인증을 해제할 디스코드 유저를 입력하세요.",
+            type=interactions.OptionType.USER,
+            required=True
+        )
+    ]
 )
-async def force_unverify(ctx: interactions.CommandContext):
-    modal = interactions.Modal(
-        title="MRS 마인크래프트 계정 강제 인증 해제",
-        custom_id="modal_force_unverify",
-        components=[
-            interactions.TextInput(
-                style=interactions.TextStyleType.SHORT,
-                label="인증을 해제할 유저의 마인크래프트 닉네임",
-                custom_id="check_msg",
-                required=True,
-                placeholder=get_nickname(ctx.target)
-            )
-        ]
-    )
+async def force_unverify(ctx: interactions.CommandContext, user: interactions.Member):
+    mcnick = get_nickname(user)
     
-    await ctx.popup(modal)
-
-@bot.modal("modal_force_unverify")
-async def force_unverify_response(ctx: interactions.CommandContext, check_msg: str):
-    nick = get_nickname(ctx.target)
-    if not check_msg == nick:
-        return await ctx.send(MSG_UNVERIFY_FAIL, ephemeral=True)
-    
-    await ctx.target.add_role(role=NEWBIE_ROLE_ID, guild_id=GUILD_ID)
+    await user.add_role(role=NEWBIE_ROLE_ID, guild_id=GUILD_ID)
     async with await pool.Connection() as conn:
         async with conn.cursor() as cur:
-            await cur.execute(SQL_DELETE, (int(ctx.target.id), ))
+            await cur.execute(SQL_DELETE, (int(user.id), ))
         await conn.commit()
-    await ctx.send(MSG_UNVERIFY_SUCCESS.format(mcnick=nick), ephemeral=True)
+    await ctx.send(MSG_UNVERIFY_SUCCESS.format(mcnick=mcnick), ephemeral=True)
 
 @bot.command(
     name="update",
@@ -244,7 +225,7 @@ async def update(ctx: interactions.CommandContext):
     async with await pool.Connection() as conn:
         async with conn.cursor() as cur:
             await cur.execute(SQL_GETUUID, (int(ctx.author.id), ))
-            uuid = await cur.fetchone()['mcuuid']
+            uuid = cur.fetchone()[1]
     
     name = MojangAPI.get_username(uuid)
     nick = get_nickname(ctx.author)
@@ -341,9 +322,9 @@ async def status(ctx: interactions.CommandContext):
     async with await pool.Connection() as conn:
         async with conn.cursor() as cur:
             await cur.execute(SQL_COUNT_VERIFIED)
-            verify_count = await str(cur.fetchone()['cnt']) + "명"
+            verify_count = cur.fetchone()[0]
             await cur.execute(SQL_COUNT_BANNED)
-            ban_count = await str(cur.fetchone()['cnt']) + "명"
+            ban_count = cur.fetchone()[0]
     
     await ctx.send(embeds=interactions.Embed(
         title="MRS 인증봇 현황",
@@ -351,12 +332,12 @@ async def status(ctx: interactions.CommandContext):
         fields=[
             interactions.EmbedField(
                 name="인증됨",
-                value=verify_count,
+                value=f"{verify_count}명",
                 inline=True
             ),
             interactions.EmbedField(
                 name="차단됨",
-                value=ban_count,
+                value=f"{ban_count}명",
                 inline=True
             ),
             interactions.EmbedField(
