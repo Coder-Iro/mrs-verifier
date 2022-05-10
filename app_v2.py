@@ -27,6 +27,12 @@ MSG_UPDATE_SUCCESS = "계정 정보를 성공적으로 갱신하였습니다."
 MSG_UPDATE_ALREADY = "계정 정보가 이미 최신이므로 갱신할 필요가 없습니다."
 MSG_UPDATE_FAIL = "계정 정보가 존재하지 않거나 Mojang API에 연결할 수 없습니다. 잠시 후 다시 시도해주세요."
 
+MSG_BAN_SUCCESS = "마인크래프트 계정 `{mcnick}` (uuid: `{mcuuid}`) 의 계정 인증이 차단되었습니다."
+MSG_BAN_FAIL = "마인크래프트 계정 `{mcnick}` (uuid: `{mcuuid}`) 은/는 이미 차단되었습니다."
+
+MSG_UNBAN_SUCCESS = "마인크래프트 계정 `{mcnick}` (uuid: `{mcuuid}`) 의 계정 인증 차단이 해제되었습니다."
+MSG_UNBAN_FAIL = "차단되지 않은 계정입니다. 차단된 계정에 대해서만 계정 인증 차단을 해제할 수 있습니다."
+
 MSG_INVALID_UUID = "유효하지 않은 uuid입니다. 32자리의 uuid를 대시(-)를 포함하여 정확히 입력해주세요."
 MSG_INVALID_NAME = "유효하지 않은 닉네임입니다. 마인크래프트 닉네임을 정확히 입력해주세요."
 MSG_INVALID_CODE = "유효하지 않은 인증코드입니다. 인증코드는 띄어쓰기 없이 6자리 숫자로 입력해주세요."
@@ -39,7 +45,9 @@ MSG_SERVER_DOWN = "서버 정보를 불러올 수 없습니다."
 SQL_CHECK_DUPLICATE = "SELECT * FROM linked_account WHERE mcuuid=%s"
 SQL_CHECK_BLACK = "SELECT * FROM blacklist WHERE mcuuid=%s"
 SQL_INSERT = "INSERT INTO linked_account(discord,mcuuid) values (%s, %s)"
+SQL_INSERT_BLACK = "INSERT INTO blacklist(mcuuid) values (%s)"
 SQL_DELETE = "DELETE FROM linked_account WHERE discord=%s"
+SQL_DELETE_BLACK = "DELETE FROM blacklist WHERE mcuuid=%s"
 SQL_GETUUID = "SELECT * FROM linked_account WHERE discord=%s"
 SQL_COUNT_VERIFIED = "SELECT COUNT(*) as cnt FROM linked_account"
 SQL_COUNT_BANNED = "SELECT COUNT(*) as cnt FROM blacklist"
@@ -273,7 +281,24 @@ async def update(ctx: interactions.CommandContext):
     ]
 )
 async def ban(ctx: interactions.CommandContext, sub_command: str, uuid: str = None, name: str = None):
-    pass
+    if sub_command == "uuid":
+        name = MojangAPI.get_username(uuid)
+        if not UUID_REGEX_CODE.match(uuid) or not name:
+            return await ctx.send(MSG_INVALID_UUID, ephemeral=True)
+    elif sub_command == "name":
+        uuid = MojangAPI.get_uuid(name)
+        if not uuid:
+            return await ctx.send(MSG_INVALID_NAME, ephemeral=True)
+        name = MojangAPI.get_username(uuid)
+    
+    async with await pool.Connection() as conn:
+        async with conn.cursor() as cur:
+            if await cur.execute(SQL_CHECK_BLACK, (uuid, )):
+                return await ctx.send(MSG_BAN_FAIL.format(mcnick=name, mcuuid=uuid), ephemeral=True)
+            await cur.execute(SQL_INSERT_BLACK, (uuid, ))
+        await conn.commit()
+    await ctx.send(MSG_BAN_SUCCESS.format(mcnick=name, mcuuid=uuid), ephemeral=True)
+    
 
 @bot.command(
     name="unban",
@@ -309,7 +334,23 @@ async def ban(ctx: interactions.CommandContext, sub_command: str, uuid: str = No
     ]
 )
 async def unban(ctx: interactions.CommandContext, sub_command: str, uuid: str = None, name: str = None):
-    pass
+    if sub_command == "uuid":
+        name = MojangAPI.get_username(uuid)
+        if not UUID_REGEX_CODE.match(uuid) or not name:
+            return await ctx.send(MSG_INVALID_UUID, ephemeral=True)
+    elif sub_command == "name":
+        uuid = MojangAPI.get_uuid(name)
+        if not uuid:
+            return await ctx.send(MSG_INVALID_NAME, ephemeral=True)
+        name = MojangAPI.get_username(uuid)
+    
+    async with await pool.Connection() as conn:
+        async with conn.cursor() as cur:
+            if not await cur.execute(SQL_CHECK_BLACK, (uuid, )):
+                return await ctx.send(MSG_UNBAN_FAIL, ephemeral=True)
+            await cur.execute(SQL_DELETE_BLACK, (uuid, ))
+        await conn.commit()
+    await ctx.send(MSG_UNBAN_SUCCESS.format(mcnick=name, mcuuid=uuid), ephemeral=True)
 
 @bot.command(
     name="status",
