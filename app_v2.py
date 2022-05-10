@@ -10,12 +10,12 @@ from mcstatus import JavaServer
 
 import config
 
-TOKEN = config.TOKEN
-GUILD_ID = config.GUILD_ID
-NEWBIE_ROLE_ID = config.NEWBIE_ROLE_ID
-EMBED_COLOR = config.EMBED_COLOR
-SQL = config.SQL
-REDIS = config.REDIS
+TOKEN: str = config.TOKEN
+GUILD_ID: int = config.GUILD_ID
+NEWBIE_ROLE_ID: int = config.NEWBIE_ROLE_ID
+EMBED_COLOR: int = config.EMBED_COLOR
+SQL: dict = config.SQL
+REDIS: dict = config.REDIS
 
 MSG_VERIFY_SUCCESS = "마인크래프트 계정 `{mcnick}` 이/가 성공적으로 인증되었습니다."
 MSG_VERIFY_FAIL = "인증번호가 일치하지 않습니다."
@@ -55,7 +55,7 @@ SQL_COUNT_BANNED = "SELECT COUNT(*) as cnt FROM blacklist"
 REGEX_CODE = re.compile(r'\d{6}')
 UUID_REGEX_CODE = re.compile(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}')
 
-start_time = time.time()
+start_time: float = time.time()
 pool = tormysql.ConnectionPool(**SQL)
 rd = redis.StrictRedis(**REDIS)
 bot = interactions.Client(token=TOKEN, intents=interactions.Intents.ALL)
