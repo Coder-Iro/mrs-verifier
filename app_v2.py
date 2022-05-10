@@ -289,6 +289,7 @@ async def ban(ctx: interactions.CommandContext, sub_command: str, uuid: str = No
         uuid = MojangAPI.get_uuid(name)
         if not uuid:
             return await ctx.send(MSG_INVALID_NAME, ephemeral=True)
+        uuid = '-'.join([uuid[:8], uuid[8:12], uuid[12:16], uuid[16:20], uuid[20:]])
         name = MojangAPI.get_username(uuid)
     
     async with await pool.Connection() as conn:
@@ -342,6 +343,7 @@ async def unban(ctx: interactions.CommandContext, sub_command: str, uuid: str = 
         uuid = MojangAPI.get_uuid(name)
         if not uuid:
             return await ctx.send(MSG_INVALID_NAME, ephemeral=True)
+        uuid = '-'.join([uuid[:8], uuid[8:12], uuid[12:16], uuid[16:20], uuid[20:]])
         name = MojangAPI.get_username(uuid)
     
     async with await pool.Connection() as conn:
