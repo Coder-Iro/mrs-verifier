@@ -19,9 +19,12 @@ REDIS: dict = config.REDIS
 
 MSG_VERIFY_SUCCESS = "마인크래프트 계정 `{mcnick}` 이/가 성공적으로 인증되었습니다."
 MSG_VERIFY_FAIL = "인증번호가 일치하지 않습니다."
+MSG_VERIFY_ALREADY = "마인크래프트 계정 `{mcnick}` 은 이미 인증된 계정입니다."
+MSG_VERIFY_BANNED = "마인크래프트 계정 `{mcnick}` 은/는 차단된 계정입니다. 차단된 계정으로는 인증하실 수 없습니다."
 
 MSG_UNVERIFY_SUCCESS = "마인크래프트 계정 `{mcnick}`의 인증이 성공적으로 해제되었습니다."
-MSG_UNVERIFY_FAIL = "입력한 닉네임이 올바르지 않습니다. 계정 인증 해제를 취소합니다."
+MSG_UNVERIFY_CANCEL = "입력한 닉네임이 올바르지 않습니다. 계정 인증 해제를 취소합니다."
+MSG_UNVERIFY_FAIL = "인증되지 않은 유저입니다. 인증된 유저만 인증을 해제할 수 있습니다."
 
 MSG_UPDATE_SUCCESS = "계정 정보를 성공적으로 갱신하였습니다."
 MSG_UPDATE_ALREADY = "계정 정보가 이미 최신이므로 갱신할 필요가 없습니다."
@@ -36,9 +39,6 @@ MSG_UNBAN_FAIL = "차단되지 않은 계정입니다. 차단된 계정에 대�
 MSG_INVALID_UUID = "유효하지 않은 uuid입니다. 32자리의 uuid를 대시(-)를 포함하여 정확히 입력해주세요."
 MSG_INVALID_NAME = "유효하지 않은 닉네임입니다. 마인크래프트 닉네임을 정확히 입력해주세요."
 MSG_INVALID_CODE = "유효하지 않은 인증코드입니다. 인증코드는 띄어쓰기 없이 6자리 숫자로 입력해주세요."
-
-MSG_DUPLICATE = "마인크래프트 계정 `{mcnick}` 은 이미 인증된 계정입니다."
-MSG_BANNED = "마인크래프트 계정 `{mcnick}` 은/는 차단된 계정입니다. 차단된 계정으로는 인증하실 수 없습니다."
 
 MSG_SERVER_DOWN = "서버 정보를 불러올 수 없습니다."
 
@@ -71,7 +71,7 @@ def get_nickname(member: interactions.Member) -> str:
     description="마인크래프트 계정을 인증합니다.",
     scope=GUILD_ID
 )
-async def verify(ctx: interactions.CommandContext):
+async def verify(ctx: interactions.CommandContext):    
     modal = interactions.Modal(
         title="MRS 마인크래프트 계정 인증",
         custom_id="modal_verify",
@@ -99,7 +99,7 @@ async def verify(ctx: interactions.CommandContext):
     await ctx.popup(modal)
 
 @bot.modal("modal_verify")
-async def verify_response(ctx: interactions.CommandContext, mcnick: str, code: str):
+async def verify_response(ctx: interactions.CommandContext, mcnick: str, code: str):    
     if not REGEX_CODE.match(code):
         return await ctx.send(MSG_INVALID_CODE, ephemeral=True)
     
@@ -109,9 +109,9 @@ async def verify_response(ctx: interactions.CommandContext, mcnick: str, code: s
         async with await pool.Connection() as conn:
             async with conn.cursor() as cur:
                 if await cur.execute(SQL_CHECK_DUPLICATE, (uuid, )):
-                    return await ctx.send(MSG_DUPLICATE.format(mcnick=mcnick), ephemeral=True)
+                    return await ctx.send(MSG_VERIFY_ALREADY.format(mcnick=mcnick), ephemeral=True)
                 if await cur.execute(SQL_CHECK_BLACK, (uuid, )):
-                    return await ctx.send(MSG_BANNED.format(mcnick=mcnick), ephemeral=True)
+                    return await ctx.send(MSG_VERIFY_BANNED.format(mcnick=mcnick), ephemeral=True)
         if realcode == code:
             await ctx.author.modify(nick=mcnick, guild_id=GUILD_ID)
             await ctx.author.remove_role(role=NEWBIE_ROLE_ID, guild_id=GUILD_ID)
@@ -131,6 +131,9 @@ async def verify_response(ctx: interactions.CommandContext, mcnick: str, code: s
     scope=GUILD_ID
 )
 async def unverify(ctx: interactions.CommandContext):
+    if NEWBIE_ROLE_ID in ctx.author.roles:
+        return await ctx.send(MSG_UNVERIFY_FAIL, ephemeral=True)
+    
     modal = interactions.Modal(
         title="MRS 마인크래프트 계정 인증 해제",
         custom_id="modal_unverify",
@@ -151,7 +154,7 @@ async def unverify(ctx: interactions.CommandContext):
 async def unverify_response(ctx: interactions.CommandContext, check_msg: str):
     nick = get_nickname(ctx.author)
     if not check_msg == nick:
-        return await ctx.send(MSG_UNVERIFY_FAIL, ephemeral=True)
+        return await ctx.send(MSG_UNVERIFY_CANCEL, ephemeral=True)
     
     await ctx.author.add_role(role=NEWBIE_ROLE_ID, guild_id=GUILD_ID)
     async with await pool.Connection() as conn:
@@ -164,6 +167,7 @@ async def unverify_response(ctx: interactions.CommandContext, check_msg: str):
     name="force_verify",
     description="특정 유저의 마인크래프트 계정을 강제로 인증합니다.",
     scope=GUILD_ID,
+    default_member_permissions=interactions.Permissions.ADMINISTRATOR,
     options=[
         interactions.Option(
             name="user",
@@ -189,9 +193,9 @@ async def force_verify(ctx: interactions.CommandContext, user: interactions.Memb
     async with await pool.Connection() as conn:
         async with conn.cursor() as cur:
             if await cur.execute(SQL_CHECK_DUPLICATE, (uuid, )):
-                return await ctx.send(MSG_DUPLICATE.format(mcnick=mcnick), ephemeral=True)
+                return await ctx.send(MSG_VERIFY_ALREADY.format(mcnick=mcnick), ephemeral=True)
             if await cur.execute(SQL_CHECK_BLACK, (uuid, )):
-                return await ctx.send(MSG_BANNED.format(mcnick=mcnick), ephemeral=True)
+                return await ctx.send(MSG_VERIFY_BANNED.format(mcnick=mcnick), ephemeral=True)
             
     await user.modify(nick=mcnick, guild_id=GUILD_ID)
     await user.remove_role(role=NEWBIE_ROLE_ID, guild_id=GUILD_ID)
@@ -205,6 +209,7 @@ async def force_verify(ctx: interactions.CommandContext, user: interactions.Memb
     name="force_unverify",
     description="특정 유저의 마인크래프트 계정 인증을 강제로 해제합니다.",
     scope=GUILD_ID,
+    default_member_permissions=interactions.Permissions.ADMINISTRATOR,
     options=[
         interactions.Option(
             name="user",
@@ -215,6 +220,9 @@ async def force_verify(ctx: interactions.CommandContext, user: interactions.Memb
     ]
 )
 async def force_unverify(ctx: interactions.CommandContext, user: interactions.Member):
+    if NEWBIE_ROLE_ID in user.roles:
+        return await ctx.send(MSG_UNVERIFY_FAIL, ephemeral=True)
+    
     mcnick = get_nickname(user)
     
     await user.add_role(role=NEWBIE_ROLE_ID, guild_id=GUILD_ID)
@@ -251,6 +259,7 @@ async def update(ctx: interactions.CommandContext):
     name="ban",
     description="특정 유저의 계정 인증을 차단합니다.",
     scope=GUILD_ID,
+    default_member_permissions=interactions.Permissions.ADMINISTRATOR,
     options=[
         interactions.Option(
             name="uuid",
@@ -305,6 +314,7 @@ async def ban(ctx: interactions.CommandContext, sub_command: str, uuid: str = No
     name="unban",
     description="특정 유저의 계정 인증 차단을 해제합니다.",
     scope=GUILD_ID,
+    default_member_permissions=interactions.Permissions.ADMINISTRATOR,
     options=[
         interactions.Option(
             name="uuid",
