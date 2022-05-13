@@ -1,4 +1,6 @@
+from flask_discord_interactions import User
 import interactions
+from sympy import as_finite_diff
 
 import tormysql
 import re
@@ -9,6 +11,8 @@ from mojang import MojangAPI
 from mcstatus import JavaServer
 
 import config
+
+from abc import ABCMeta, abstractmethod
 
 TOKEN: str = config.TOKEN
 GUILD_ID: int = config.GUILD_ID
@@ -61,7 +65,7 @@ rd = redis.StrictRedis(**REDIS)
 bot = interactions.Client(token=TOKEN, intents=interactions.Intents.ALL)
 
 def get_footer() -> str:
-    return time.strftime(f"%Y.%m.%d. %H:%M:%S", time.localtime()) + " [개발 버전]"
+    return time.strftime(f"%Y.%m.%d. %H:%M:%S", time.localtime()) + " [MRS Verifier V2 Beta]"
 
 def get_nickname(member: interactions.Member) -> str:
     return member.nick if member.nick else member.user.username
@@ -103,27 +107,29 @@ async def verify_response(ctx: interactions.CommandContext, mcnick: str, code: s
     if not REGEX_CODE.match(code):
         return await ctx.send(MSG_INVALID_CODE, ephemeral=True)
     
-    if rd.exists(mcnick):
-        realcode = rd.hget(mcnick, "code").decode("UTF-8")
-        uuid = rd.hget(mcnick, "UUID").decode("UTF-8")
-        async with await pool.Connection() as conn:
-            async with conn.cursor() as cur:
-                if await cur.execute(SQL_CHECK_DUPLICATE, (uuid, )):
-                    return await ctx.send(MSG_VERIFY_ALREADY.format(mcnick=mcnick), ephemeral=True)
-                if await cur.execute(SQL_CHECK_BLACK, (uuid, )):
-                    return await ctx.send(MSG_VERIFY_BANNED.format(mcnick=mcnick), ephemeral=True)
-        if realcode == code:
-            await ctx.author.modify(nick=mcnick, guild_id=GUILD_ID)
-            await ctx.author.remove_role(role=NEWBIE_ROLE_ID, guild_id=GUILD_ID)
-            async with await pool.Connection() as conn:
-                async with conn.cursor() as cur:
-                    await cur.execute(SQL_INSERT, (int(ctx.author.id), uuid))
-                await conn.commit()
-            await ctx.send(MSG_VERIFY_SUCCESS.format(mcnick=mcnick), ephemeral=True)
-        else:
-            await ctx.send(MSG_VERIFY_FAIL, ephemeral=True)
-    else:
-        await ctx.send(MSG_INVALID_NAME, ephemeral=True)
+    if not rd.exists(mcnick):
+        return await ctx.send(MSG_INVALID_NAME, ephemeral=True)
+    realcode = rd.hget(mcnick, "code").decode("UTF-8")
+    uuid = rd.hget(mcnick, "UUID").decode("UTF-8")
+    
+    async with await pool.Connection() as conn:
+        async with conn.cursor() as cur:
+            if await cur.execute(SQL_CHECK_DUPLICATE, (uuid, )):
+                return await ctx.send(MSG_VERIFY_ALREADY.format(mcnick=mcnick), ephemeral=True)
+            if await cur.execute(SQL_CHECK_BLACK, (uuid, )):
+                return await ctx.send(MSG_VERIFY_BANNED.format(mcnick=mcnick), ephemeral=True)
+
+    if realcode != code:
+        return await ctx.send(MSG_VERIFY_FAIL, ephemeral=True)
+    
+    await ctx.author.modify(nick=mcnick, guild_id=GUILD_ID)
+    await ctx.author.remove_role(role=NEWBIE_ROLE_ID, guild_id=GUILD_ID)
+    async with await pool.Connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(SQL_INSERT, (int(ctx.author.id), uuid))
+        await conn.commit()
+    await ctx.send(MSG_VERIFY_SUCCESS.format(mcnick=mcnick), ephemeral=True)
+        
 
 @bot.command(
     name="unverify",
