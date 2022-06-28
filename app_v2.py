@@ -1,4 +1,6 @@
+from flask_discord_interactions import User
 import interactions
+from sympy import as_finite_diff
 
 import tormysql
 import re
@@ -12,36 +14,44 @@ import config
 
 from abc import ABCMeta, abstractmethod
 
-TOKEN = config.TOKEN
-GUILD_ID = config.GUILD_ID
-NEWBIE_ROLE_ID = config.NEWBIE_ROLE_ID
-EMBED_COLOR = config.EMBED_COLOR
-SQL = config.SQL
-REDIS = config.REDIS
+TOKEN: str = config.TOKEN
+GUILD_ID: int = config.GUILD_ID
+NEWBIE_ROLE_ID: int = config.NEWBIE_ROLE_ID
+EMBED_COLOR: int = config.EMBED_COLOR
+SQL: dict = config.SQL
+REDIS: dict = config.REDIS
 
 MSG_VERIFY_SUCCESS = "마인크래프트 계정 `{mcnick}` 이/가 성공적으로 인증되었습니다."
 MSG_VERIFY_FAIL = "인증번호가 일치하지 않습니다."
+MSG_VERIFY_ALREADY = "마인크래프트 계정 `{mcnick}` 은 이미 인증된 계정입니다."
+MSG_VERIFY_BANNED = "마인크래프트 계정 `{mcnick}` 은/는 차단된 계정입니다. 차단된 계정으로는 인증하실 수 없습니다."
 
 MSG_UNVERIFY_SUCCESS = "마인크래프트 계정 `{mcnick}`의 인증이 성공적으로 해제되었습니다."
-MSG_UNVERIFY_FAIL = "입력한 닉네임이 올바르지 않습니다. 계정 인증 해제를 취소합니다."
+MSG_UNVERIFY_CANCEL = "입력한 닉네임이 올바르지 않습니다. 계정 인증 해제를 취소합니다."
+MSG_UNVERIFY_FAIL = "인증되지 않은 유저입니다. 인증된 유저만 인증을 해제할 수 있습니다."
 
 MSG_UPDATE_SUCCESS = "계정 정보를 성공적으로 갱신하였습니다."
 MSG_UPDATE_ALREADY = "계정 정보가 이미 최신이므로 갱신할 필요가 없습니다."
 MSG_UPDATE_FAIL = "계정 정보가 존재하지 않거나 Mojang API에 연결할 수 없습니다. 잠시 후 다시 시도해주세요."
 
+MSG_BAN_SUCCESS = "마인크래프트 계정 `{mcnick}` (uuid: `{mcuuid}`) 의 계정 인증이 차단되었습니다."
+MSG_BAN_FAIL = "마인크래프트 계정 `{mcnick}` (uuid: `{mcuuid}`) 은/는 이미 차단되었습니다."
+
+MSG_UNBAN_SUCCESS = "마인크래프트 계정 `{mcnick}` (uuid: `{mcuuid}`) 의 계정 인증 차단이 해제되었습니다."
+MSG_UNBAN_FAIL = "차단되지 않은 계정입니다. 차단된 계정에 대해서만 계정 인증 차단을 해제할 수 있습니다."
+
 MSG_INVALID_UUID = "유효하지 않은 uuid입니다. 32자리의 uuid를 대시(-)를 포함하여 정확히 입력해주세요."
 MSG_INVALID_NAME = "유효하지 않은 닉네임입니다. 마인크래프트 닉네임을 정확히 입력해주세요."
 MSG_INVALID_CODE = "유효하지 않은 인증코드입니다. 인증코드는 띄어쓰기 없이 6자리 숫자로 입력해주세요."
-
-MSG_DUPLICATE = "마인크래프트 계정 `{mcnick}` 은 이미 인증된 계정입니다."
-MSG_BANNED = "마인크래프트 계정 `{mcnick}` 은/는 차단된 계정입니다. 차단된 계정으로는 인증하실 수 없습니다."
 
 MSG_SERVER_DOWN = "서버 정보를 불러올 수 없습니다."
 
 SQL_CHECK_DUPLICATE = "SELECT * FROM linked_account WHERE mcuuid=%s"
 SQL_CHECK_BLACK = "SELECT * FROM blacklist WHERE mcuuid=%s"
 SQL_INSERT = "INSERT INTO linked_account(discord,mcuuid) values (%s, %s)"
+SQL_INSERT_BLACK = "INSERT INTO blacklist(mcuuid) values (%s)"
 SQL_DELETE = "DELETE FROM linked_account WHERE discord=%s"
+SQL_DELETE_BLACK = "DELETE FROM blacklist WHERE mcuuid=%s"
 SQL_GETUUID = "SELECT * FROM linked_account WHERE discord=%s"
 SQL_COUNT_VERIFIED = "SELECT COUNT(*) as cnt FROM linked_account"
 SQL_COUNT_BANNED = "SELECT COUNT(*) as cnt FROM blacklist"
@@ -49,13 +59,13 @@ SQL_COUNT_BANNED = "SELECT COUNT(*) as cnt FROM blacklist"
 REGEX_CODE = re.compile(r'\d{6}')
 UUID_REGEX_CODE = re.compile(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}')
 
-start_time = time.time()
+start_time: float = time.time()
 pool = tormysql.ConnectionPool(**SQL)
 rd = redis.StrictRedis(**REDIS)
 bot = interactions.Client(token=TOKEN, intents=interactions.Intents.ALL)
 
 def get_footer() -> str:
-    return time.strftime(f"%Y.%m.%d. %H:%M:%S", time.localtime()) + " [개발 버전]"
+    return time.strftime(f"%Y.%m.%d. %H:%M:%S", time.localtime()) + " [MRS Verifier V2 Beta]"
 
 def get_nickname(member: interactions.Member) -> str:
     return member.nick if member.nick else member.user.username
@@ -76,9 +86,9 @@ class BaseVerifier(metaclass=ABCMeta):
         async with await pool.Connection() as conn:
             async with conn.cursor() as cur:
                 if await cur.execute(SQL_CHECK_DUPLICATE, (self.uuid, )):
-                    raise VerificationError(MSG_DUPLICATE.format(mcnick=self.mcnick))
+                    raise VerificationError(MSG_VERIFY_ALREADY.format(mcnick=self.mcnick))
                 if await cur.execute(SQL_CHECK_BLACK, (self.uuid, )):
-                    raise VerificationError(MSG_BANNED.format(mcnick=self.mcnick))
+                    raise VerificationError(MSG_VERIFY_BANNED.format(mcnick=self.mcnick))
 
     @abstractmethod
     async def _apply_verify(self):
@@ -172,7 +182,7 @@ class Unverifier(BaseVerifier):
     
     def _check_nick(self):
         if not self.check_msg == self.mcnick:
-            raise VerificationError(MSG_UNVERIFY_FAIL)
+            raise VerificationError(MSG_UNVERIFY_CANCEL)
     
     async def _apply_verify(self):
         await self.ctx.author.add_role(role=NEWBIE_ROLE_ID, guild_id=GUILD_ID)
@@ -220,7 +230,7 @@ class ForceUnverifier(BaseVerifier):
     description="마인크래프트 계정을 인증합니다.",
     scope=GUILD_ID
 )
-async def verify(ctx: interactions.CommandContext):
+async def verify(ctx: interactions.CommandContext):    
     modal = interactions.Modal(
         title="MRS 마인크래프트 계정 인증",
         custom_id="modal_verify",
@@ -258,6 +268,9 @@ async def verify_response(ctx: interactions.CommandContext, mcnick: str, code: s
     scope=GUILD_ID
 )
 async def unverify(ctx: interactions.CommandContext):
+    if NEWBIE_ROLE_ID in ctx.author.roles:
+        return await ctx.send(MSG_UNVERIFY_FAIL, ephemeral=True)
+    
     modal = interactions.Modal(
         title="MRS 마인크래프트 계정 인증 해제",
         custom_id="modal_unverify",
@@ -283,6 +296,7 @@ async def unverify_response(ctx: interactions.CommandContext, check_msg: str):
     name="force_verify",
     description="특정 유저의 마인크래프트 계정을 강제로 인증합니다.",
     scope=GUILD_ID,
+    default_member_permissions=interactions.Permissions.ADMINISTRATOR,
     options=[
         interactions.Option(
             name="user",
@@ -306,6 +320,7 @@ async def force_verify(ctx: interactions.CommandContext, user: interactions.Memb
     name="force_unverify",
     description="특정 유저의 마인크래프트 계정 인증을 강제로 해제합니다.",
     scope=GUILD_ID,
+    default_member_permissions=interactions.Permissions.ADMINISTRATOR,
     options=[
         interactions.Option(
             name="user",
@@ -346,6 +361,7 @@ async def update(ctx: interactions.CommandContext):
     name="ban",
     description="특정 유저의 계정 인증을 차단합니다.",
     scope=GUILD_ID,
+    default_member_permissions=interactions.Permissions.ADMINISTRATOR,
     options=[
         interactions.Option(
             name="uuid",
@@ -376,12 +392,31 @@ async def update(ctx: interactions.CommandContext):
     ]
 )
 async def ban(ctx: interactions.CommandContext, sub_command: str, uuid: str = None, name: str = None):
-    pass
+    if sub_command == "uuid":
+        name = MojangAPI.get_username(uuid)
+        if not UUID_REGEX_CODE.match(uuid) or not name:
+            return await ctx.send(MSG_INVALID_UUID, ephemeral=True)
+    elif sub_command == "name":
+        uuid = MojangAPI.get_uuid(name)
+        if not uuid:
+            return await ctx.send(MSG_INVALID_NAME, ephemeral=True)
+        uuid = '-'.join([uuid[:8], uuid[8:12], uuid[12:16], uuid[16:20], uuid[20:]])
+        name = MojangAPI.get_username(uuid)
+    
+    async with await pool.Connection() as conn:
+        async with conn.cursor() as cur:
+            if await cur.execute(SQL_CHECK_BLACK, (uuid, )):
+                return await ctx.send(MSG_BAN_FAIL.format(mcnick=name, mcuuid=uuid), ephemeral=True)
+            await cur.execute(SQL_INSERT_BLACK, (uuid, ))
+        await conn.commit()
+    await ctx.send(MSG_BAN_SUCCESS.format(mcnick=name, mcuuid=uuid), ephemeral=True)
+    
 
 @bot.command(
     name="unban",
     description="특정 유저의 계정 인증 차단을 해제합니다.",
     scope=GUILD_ID,
+    default_member_permissions=interactions.Permissions.ADMINISTRATOR,
     options=[
         interactions.Option(
             name="uuid",
@@ -412,7 +447,24 @@ async def ban(ctx: interactions.CommandContext, sub_command: str, uuid: str = No
     ]
 )
 async def unban(ctx: interactions.CommandContext, sub_command: str, uuid: str = None, name: str = None):
-    pass
+    if sub_command == "uuid":
+        name = MojangAPI.get_username(uuid)
+        if not UUID_REGEX_CODE.match(uuid) or not name:
+            return await ctx.send(MSG_INVALID_UUID, ephemeral=True)
+    elif sub_command == "name":
+        uuid = MojangAPI.get_uuid(name)
+        if not uuid:
+            return await ctx.send(MSG_INVALID_NAME, ephemeral=True)
+        uuid = '-'.join([uuid[:8], uuid[8:12], uuid[12:16], uuid[16:20], uuid[20:]])
+        name = MojangAPI.get_username(uuid)
+    
+    async with await pool.Connection() as conn:
+        async with conn.cursor() as cur:
+            if not await cur.execute(SQL_CHECK_BLACK, (uuid, )):
+                return await ctx.send(MSG_UNBAN_FAIL, ephemeral=True)
+            await cur.execute(SQL_DELETE_BLACK, (uuid, ))
+        await conn.commit()
+    await ctx.send(MSG_UNBAN_SUCCESS.format(mcnick=name, mcuuid=uuid), ephemeral=True)
 
 @bot.command(
     name="status",
