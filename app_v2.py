@@ -10,6 +10,8 @@ from mcstatus import JavaServer
 
 import config
 
+from abc import ABCMeta, abstractmethod
+
 TOKEN = config.TOKEN
 GUILD_ID = config.GUILD_ID
 NEWBIE_ROLE_ID = config.NEWBIE_ROLE_ID
@@ -58,6 +60,161 @@ def get_footer() -> str:
 def get_nickname(member: interactions.Member) -> str:
     return member.nick if member.nick else member.user.username
 
+class VerificationError(Exception):
+    pass
+
+class BaseVerifier(metaclass=ABCMeta):
+    @abstractmethod
+    def __init__(self, ctx: interactions.CommandContext, *args):
+        pass
+
+    @abstractmethod
+    def _get_profile(self):
+        pass
+
+    async def _check_db(self):
+        async with await pool.Connection() as conn:
+            async with conn.cursor() as cur:
+                if await cur.execute(SQL_CHECK_DUPLICATE, (self.uuid, )):
+                    raise VerificationError(MSG_DUPLICATE.format(mcnick=self.mcnick))
+                if await cur.execute(SQL_CHECK_BLACK, (self.uuid, )):
+                    raise VerificationError(MSG_BANNED.format(mcnick=self.mcnick))
+
+    @abstractmethod
+    async def _apply_verify(self):
+        pass
+
+    @abstractmethod
+    def verify(self):
+        pass
+
+
+class Verifier(BaseVerifier):
+    def __init__(self, ctx: interactions.CommandContext, mcnick: str, code: str):
+        self.ctx = ctx
+        self.mcnick = mcnick
+        self.code = code
+
+    def _get_profile(self):
+        if rd.exists(self.mcnick):
+            self.realcode = rd.hget(self.mcnick, "code").decode("UTF-8")
+            self.uuid = rd.hget(self.mcnick, "UUID").decode("UTF-8")
+        else:
+            raise VerificationError(MSG_INVALID_NAME)
+    
+    def _validate_code(self):
+        if not REGEX_CODE.match(self.code):
+            raise VerificationError(MSG_INVALID_CODE)
+
+    def _verify_code(self):
+        if self.realcode != self.code:
+            raise VerificationError(MSG_VERIFY_FAIL)
+    
+    async def _apply_verify(self):
+        await self.ctx.author.modify(nick=self.mcnick, guild_id=GUILD_ID)
+        await self.ctx.author.remove_role(role=NEWBIE_ROLE_ID, guild_id=GUILD_ID)
+        async with await pool.Connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(SQL_INSERT, (int(self.ctx.author.id), self.uuid))
+            await conn.commit()
+    
+    async def verify(self):
+        try:
+            self._get_profile()
+            self._validate_code()
+            self._check_db()
+            self._verify_code()
+            self._apply_verify()
+        except VerificationError as e:
+            return await self.ctx.send(e, ephemeral=True)
+        
+        return await self.ctx.send(MSG_VERIFY_SUCCESS.format(mcnick=self.mcnick), ephemeral=True)
+
+
+class ForceVerifier(BaseVerifier):
+    def __init__(self, ctx: interactions.CommandContext, user: interactions.Member, mcnick: str):
+        self.ctx = ctx
+        self.user = user
+        self.mcnick = mcnick
+
+    def _get_profile(self):
+        uuid = MojangAPI.get_uuid(self.mcnick)
+        if not uuid:
+            raise VerificationError(MSG_INVALID_NAME)
+        self.uuid = '-'.join([uuid[:8], uuid[8:12], uuid[12:16], uuid[16:20], uuid[20:]])
+        self.mcnick = MojangAPI.get_username(self.uuid)
+    
+    async def _apply_verify(self):
+        await self.user.modify(nick=self.mcnick, guild_id=GUILD_ID)
+        await self.user.remove_role(role=NEWBIE_ROLE_ID, guild_id=GUILD_ID)
+        async with await pool.Connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(SQL_INSERT, (int(self.user.id), self.uuid))
+            await conn.commit()
+
+    async def verify(self):
+        try:
+            self._get_profile()
+            self._check_db()
+            self._apply_verify()
+        except VerificationError as e:
+            return await self.ctx.send(e, ephemeral=True)
+
+        return await self.ctx.send(MSG_VERIFY_SUCCESS.format(mcnick=self.mcnick), ephemeral=True)
+
+class Unverifier(BaseVerifier):
+    def __init__(self, ctx: interactions.CommandContext, check_msg: str):
+        self.ctx = ctx
+        self.check_msg = check_msg
+    
+    def _get_profile(self):
+        self.mcnick = self.ctx.author.nick if self.ctx.author.nick else self.ctx.author.user.username
+    
+    def _check_nick(self):
+        if not self.check_msg == self.mcnick:
+            raise VerificationError(MSG_UNVERIFY_FAIL)
+    
+    async def _apply_verify(self):
+        await self.ctx.author.add_role(role=NEWBIE_ROLE_ID, guild_id=GUILD_ID)
+        async with await pool.Connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(SQL_DELETE, (int(self.ctx.author.id), ))
+            await conn.commit()
+    
+    async def verify(self):
+        try:
+            self._get_profile()
+            self._check_nick()
+            self._apply_verify()
+        except VerificationError as e:
+            return await self.ctx.send(e, ephemeral=True)
+        
+        return await self.ctx.send(MSG_UNVERIFY_SUCCESS.format(mcnick=self.mcnick), ephemeral=True)
+
+class ForceUnverifier(BaseVerifier):
+    def __init__(self, ctx: interactions.CommandContext, user: interactions.Member):
+        self.ctx = ctx
+        self.user = user
+    
+    def _get_profile(self):
+        self.mcnick = self.user.nick if self.user.nick else self.user.user.username
+
+    async def _apply_verify(self):
+        await self.user.add_role(role=NEWBIE_ROLE_ID, guild_id=GUILD_ID)
+        async with await pool.Connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(SQL_DELETE, (int(self.user.id), ))
+            await conn.commit()
+    
+    async def verify(self):
+        try:
+            self._get_profile()
+            self._apply_verify()
+        except VerificationError as e:
+            return await self.ctx.send(e, ephemeral=True)
+        
+        return await self.ctx.send(MSG_UNVERIFY_SUCCESS.format(mcnick=self.mcnick), ephemeral=True)
+
 @bot.command(
     name="verify",
     description="마인크래프트 계정을 인증합니다.",
@@ -92,30 +249,8 @@ async def verify(ctx: interactions.CommandContext):
 
 @bot.modal("modal_verify")
 async def verify_response(ctx: interactions.CommandContext, mcnick: str, code: str):
-    if not REGEX_CODE.match(code):
-        return await ctx.send(MSG_INVALID_CODE, ephemeral=True)
-    
-    if rd.exists(mcnick):
-        realcode = rd.hget(mcnick, "code").decode("UTF-8")
-        uuid = rd.hget(mcnick, "UUID").decode("UTF-8")
-        async with await pool.Connection() as conn:
-            async with conn.cursor() as cur:
-                if await cur.execute(SQL_CHECK_DUPLICATE, (uuid, )):
-                    return await ctx.send(MSG_DUPLICATE.format(mcnick=mcnick), ephemeral=True)
-                if await cur.execute(SQL_CHECK_BLACK, (uuid, )):
-                    return await ctx.send(MSG_BANNED.format(mcnick=mcnick), ephemeral=True)
-        if realcode == code:
-            await ctx.author.modify(nick=mcnick, guild_id=GUILD_ID)
-            await ctx.author.remove_role(role=NEWBIE_ROLE_ID, guild_id=GUILD_ID)
-            async with await pool.Connection() as conn:
-                async with conn.cursor() as cur:
-                    await cur.execute(SQL_INSERT, (int(ctx.author.id), uuid))
-                await conn.commit()
-            await ctx.send(MSG_VERIFY_SUCCESS.format(mcnick=mcnick), ephemeral=True)
-        else:
-            await ctx.send(MSG_VERIFY_FAIL, ephemeral=True)
-    else:
-        await ctx.send(MSG_INVALID_NAME, ephemeral=True)
+    verifier = Verifier(ctx, mcnick, code)
+    verifier.verify()
 
 @bot.command(
     name="unverify",
@@ -132,7 +267,7 @@ async def unverify(ctx: interactions.CommandContext):
                 label="인증을 해제하시려면 본인의 닉네임을 정확히 입력해주세요.",
                 custom_id="check_msg",
                 required=True,
-                placeholder=get_nickname(ctx.author)
+                placeholder=ctx.author.nick if ctx.author.nick else ctx.author.user.username
             )
         ]
     )
@@ -141,16 +276,8 @@ async def unverify(ctx: interactions.CommandContext):
 
 @bot.modal("modal_unverify")
 async def unverify_response(ctx: interactions.CommandContext, check_msg: str):
-    nick = get_nickname(ctx.author)
-    if not check_msg == nick:
-        return await ctx.send(MSG_UNVERIFY_FAIL, ephemeral=True)
-    
-    await ctx.author.add_role(role=NEWBIE_ROLE_ID, guild_id=GUILD_ID)
-    async with await pool.Connection() as conn:
-        async with conn.cursor() as cur:
-            await cur.execute(SQL_DELETE, (int(ctx.author.id), ))
-        await conn.commit()
-    await ctx.send(MSG_UNVERIFY_SUCCESS.format(mcnick=nick), ephemeral=True)
+    unverifier = Unverifier(ctx, check_msg)
+    unverifier.verify()
 
 @bot.command(
     name="force_verify",
@@ -172,26 +299,8 @@ async def unverify_response(ctx: interactions.CommandContext, check_msg: str):
     ]
 )
 async def force_verify(ctx: interactions.CommandContext, user: interactions.Member, mcnick: str):
-    uuid = MojangAPI.get_uuid(mcnick)
-    if not uuid:
-        return await ctx.send(MSG_INVALID_NAME, ephemeral=True)
-    uuid = '-'.join([uuid[:8], uuid[8:12], uuid[12:16], uuid[16:20], uuid[20:]])
-    mcnick = MojangAPI.get_username(uuid)
-    
-    async with await pool.Connection() as conn:
-        async with conn.cursor() as cur:
-            if await cur.execute(SQL_CHECK_DUPLICATE, (uuid, )):
-                return await ctx.send(MSG_DUPLICATE.format(mcnick=mcnick), ephemeral=True)
-            if await cur.execute(SQL_CHECK_BLACK, (uuid, )):
-                return await ctx.send(MSG_BANNED.format(mcnick=mcnick), ephemeral=True)
-            
-    await user.modify(nick=mcnick, guild_id=GUILD_ID)
-    await user.remove_role(role=NEWBIE_ROLE_ID, guild_id=GUILD_ID)
-    async with await pool.Connection() as conn:
-        async with conn.cursor() as cur:
-            await cur.execute(SQL_INSERT, (int(user.id), uuid))
-        await conn.commit()
-    await ctx.send(MSG_VERIFY_SUCCESS.format(mcnick=mcnick), ephemeral=True)
+    verifier = ForceVerifier(ctx, user, mcnick)
+    verifier.verify()
     
 @bot.command(
     name="force_unverify",
@@ -207,14 +316,8 @@ async def force_verify(ctx: interactions.CommandContext, user: interactions.Memb
     ]
 )
 async def force_unverify(ctx: interactions.CommandContext, user: interactions.Member):
-    mcnick = get_nickname(user)
-    
-    await user.add_role(role=NEWBIE_ROLE_ID, guild_id=GUILD_ID)
-    async with await pool.Connection() as conn:
-        async with conn.cursor() as cur:
-            await cur.execute(SQL_DELETE, (int(user.id), ))
-        await conn.commit()
-    await ctx.send(MSG_UNVERIFY_SUCCESS.format(mcnick=mcnick), ephemeral=True)
+    unverifier = ForceUnverifier(ctx, user)
+    unverifier.verify()
 
 @bot.command(
     name="update",
@@ -228,7 +331,7 @@ async def update(ctx: interactions.CommandContext):
             uuid = cur.fetchone()[1]
     
     name = MojangAPI.get_username(uuid)
-    nick = get_nickname(ctx.author)
+    nick = BaseVerifier.get_nickname(ctx.author)
     
     if not name:
         return await ctx.send(MSG_UPDATE_FAIL, ephemeral=True)
