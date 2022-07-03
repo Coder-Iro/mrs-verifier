@@ -1,7 +1,6 @@
 from ast import Pass
 from flask_discord_interactions import User
 import interactions
-from sympy import as_finite_diff
 
 import tormysql
 import re
