@@ -1,5 +1,3 @@
-from ast import Pass
-from flask_discord_interactions import User
 import interactions
 
 import tormysql
