@@ -172,7 +172,24 @@ class ForceVerifier(BaseVerifier):
 
         return await self.ctx.send(MSG_VERIFY_SUCCESS.format(mcnick=self.mcnick), ephemeral=True)
 
-class Unverifier(BaseVerifier):
+class BaseUnverifier(metaclass=ABCMeta):
+    @abstractmethod
+    def __init__(self, ctx: interactions.CommandContext, *args):
+        pass
+
+    @abstractmethod
+    def _get_profile(self):
+        pass
+
+    @abstractmethod
+    async def _apply_unverify(self):
+        pass
+
+    @abstractmethod
+    async def unverify(self):
+        pass
+
+class Unverifier(BaseUnverifier):
     def __init__(self, ctx: interactions.CommandContext, check_msg: str):
         self.ctx = ctx
         self.check_msg = check_msg
@@ -184,24 +201,24 @@ class Unverifier(BaseVerifier):
         if not self.check_msg == self.mcnick:
             raise VerificationError(MSG_UNVERIFY_CANCEL)
     
-    async def _apply_verify(self):
+    async def _apply_unverify(self):
         await self.ctx.author.add_role(role=NEWBIE_ROLE_ID, guild_id=GUILD_ID)
         async with await pool.Connection() as conn:
             async with conn.cursor() as cur:
                 await cur.execute(SQL_DELETE, (int(self.ctx.author.id), ))
             await conn.commit()
     
-    async def verify(self):
+    async def unverify(self):
         try:
             self._get_profile()
             self._check_nick()
-            self._apply_verify()
+            self._apply_unverify()
         except VerificationError as e:
             return await self.ctx.send(e, ephemeral=True)
         
         return await self.ctx.send(MSG_UNVERIFY_SUCCESS.format(mcnick=self.mcnick), ephemeral=True)
 
-class ForceUnverifier(BaseVerifier):
+class ForceUnverifier(BaseUnverifier):
     def __init__(self, ctx: interactions.CommandContext, user: interactions.Member):
         self.ctx = ctx
         self.user = user
@@ -209,17 +226,17 @@ class ForceUnverifier(BaseVerifier):
     def _get_profile(self):
         self.mcnick = self.user.nick if self.user.nick else self.user.user.username
 
-    async def _apply_verify(self):
+    async def _apply_unverify(self):
         await self.user.add_role(role=NEWBIE_ROLE_ID, guild_id=GUILD_ID)
         async with await pool.Connection() as conn:
             async with conn.cursor() as cur:
                 await cur.execute(SQL_DELETE, (int(self.user.id), ))
             await conn.commit()
     
-    async def verify(self):
+    async def unverify(self):
         try:
             self._get_profile()
-            self._apply_verify()
+            self._apply_unverify()
         except VerificationError as e:
             return await self.ctx.send(e, ephemeral=True)
         
@@ -290,7 +307,7 @@ async def unverify(ctx: interactions.CommandContext):
 @bot.modal("modal_unverify")
 async def unverify_response(ctx: interactions.CommandContext, check_msg: str):
     unverifier = Unverifier(ctx, check_msg)
-    unverifier.verify()
+    unverifier.unverify()
 
 @bot.command(
     name="force_verify",
@@ -332,7 +349,7 @@ async def force_verify(ctx: interactions.CommandContext, user: interactions.Memb
 )
 async def force_unverify(ctx: interactions.CommandContext, user: interactions.Member):
     unverifier = ForceUnverifier(ctx, user)
-    unverifier.verify()
+    unverifier.unverify()
 
 @bot.command(
     name="update",
@@ -346,7 +363,7 @@ async def update(ctx: interactions.CommandContext):
             uuid = cur.fetchone()[1]
     
     name = MojangAPI.get_username(uuid)
-    nick = BaseVerifier.get_nickname(ctx.author)
+    nick = ctx.author.nick if ctx.author.nick else ctx.author.user.username
     
     if not name:
         return await ctx.send(MSG_UPDATE_FAIL, ephemeral=True)
