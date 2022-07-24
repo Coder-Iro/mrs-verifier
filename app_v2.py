@@ -10,8 +10,6 @@ from mcstatus import JavaServer
 
 import config
 
-from abc import ABCMeta, abstractmethod
-
 TOKEN: str = config.TOKEN
 GUILD_ID: int = config.GUILD_ID
 NEWBIE_ROLE_ID: int = config.NEWBIE_ROLE_ID
@@ -63,275 +61,10 @@ rd = redis.StrictRedis(**REDIS)
 bot = interactions.Client(token=TOKEN, intents=interactions.Intents.ALL)
 
 def get_footer() -> str:
-    return time.strftime(f"%Y.%m.%d. %H:%M:%S", time.localtime()) + " [MRS Verifier V2 Beta]"
+    return time.strftime(f"%Y.%m.%d. %H:%M:%S", time.localtime()) + " [개발 버전]"
 
 def get_nickname(member: interactions.Member) -> str:
     return member.nick if member.nick else member.user.username
-
-class VerificationError(Exception):
-    pass
-
-class ProfileError(Exception):
-    pass
-
-class BaseVerifier(metaclass=ABCMeta):
-    @abstractmethod
-    def __init__(self, ctx: interactions.CommandContext, *args):
-        pass
-
-    @abstractmethod
-    async def _get_profile(self):
-        pass
-
-    async def _check_db(self):
-        async with await pool.Connection() as conn:
-            async with conn.cursor() as cur:
-                if await cur.execute(SQL_CHECK_DUPLICATE, (self.uuid, )):
-                    raise VerificationError(MSG_VERIFY_ALREADY.format(mcnick=self.mcnick))
-                if await cur.execute(SQL_CHECK_BLACK, (self.uuid, )):
-                    raise VerificationError(MSG_VERIFY_BANNED.format(mcnick=self.mcnick))
-
-    @abstractmethod
-    async def _apply_verify(self):
-        pass
-
-    @abstractmethod
-    async def verify(self):
-        pass
-
-
-class Verifier(BaseVerifier):
-    def __init__(self, ctx: interactions.CommandContext, mcnick: str, code: str):
-        self.ctx: interactions.CommandContext = ctx
-        self.mcnick: str = mcnick
-        self.code: str = code
-
-    async def _get_profile(self):
-        if rd.exists(self.mcnick):
-            self.realcode: str = rd.hget(self.mcnick, "code").decode("UTF-8")
-            self.uuid: str = rd.hget(self.mcnick, "UUID").decode("UTF-8")
-        else:
-            raise VerificationError(MSG_INVALID_NAME)
-    
-    async def _validate_code(self):
-        if not REGEX_CODE.match(self.code):
-            raise VerificationError(MSG_INVALID_CODE)
-
-    async def _verify_code(self):
-        if self.realcode != self.code:
-            raise VerificationError(MSG_VERIFY_FAIL)
-    
-    async def _apply_verify(self):
-        await self.ctx.author.modify(nick=self.mcnick, guild_id=GUILD_ID)
-        await self.ctx.author.remove_role(role=NEWBIE_ROLE_ID, guild_id=GUILD_ID)
-        async with await pool.Connection() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(SQL_INSERT, (int(self.ctx.author.id), self.uuid))
-            await conn.commit()
-    
-    async def verify(self):
-        try:
-            await self._get_profile()
-            await self._validate_code()
-            await self._check_db()
-            await self._verify_code()
-            await self._apply_verify()
-        except VerificationError as e:
-            return await self.ctx.send(e, ephemeral=True)
-        
-        return await self.ctx.send(MSG_VERIFY_SUCCESS.format(mcnick=self.mcnick), ephemeral=True)
-
-
-class ForceVerifier(BaseVerifier):
-    def __init__(self, ctx: interactions.CommandContext, user: interactions.Member, mcnick: str):
-        self.ctx: interactions.CommandContext = ctx
-        self.user: interactions.Member = user
-        self.mcnick: str = mcnick
-
-    async def _get_profile(self):
-        uuid = MojangAPI.get_uuid(self.mcnick)
-        if not uuid:
-            raise VerificationError(MSG_INVALID_NAME)
-        self.uuid: str = '-'.join([uuid[:8], uuid[8:12], uuid[12:16], uuid[16:20], uuid[20:]])
-        self.mcnick: str = MojangAPI.get_username(self.uuid)
-    
-    async def _apply_verify(self):
-        await self.user.modify(nick=self.mcnick, guild_id=GUILD_ID)
-        await self.user.remove_role(role=NEWBIE_ROLE_ID, guild_id=GUILD_ID)
-        async with await pool.Connection() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(SQL_INSERT, (int(self.user.id), self.uuid))
-            await conn.commit()
-
-    async def verify(self):
-        try:
-            await self._get_profile()
-            await self._check_db()
-            await self._apply_verify()
-        except VerificationError as e:
-            return await self.ctx.send(e, ephemeral=True)
-
-        return await self.ctx.send(MSG_VERIFY_SUCCESS.format(mcnick=self.mcnick), ephemeral=True)
-
-class BaseUnverifier(metaclass=ABCMeta):
-    @abstractmethod
-    def __init__(self, ctx: interactions.CommandContext, *args):
-        pass
-
-    @abstractmethod
-    async def _get_profile(self):
-        pass
-
-    @abstractmethod
-    async def _apply_unverify(self):
-        pass
-
-    @abstractmethod
-    async def unverify(self):
-        pass
-
-class Unverifier(BaseUnverifier):
-    def __init__(self, ctx: interactions.CommandContext, check_msg: str):
-        self.ctx: interactions.CommandContext = ctx
-        self.check_msg: str = check_msg
-    
-    async def _get_profile(self):
-        self.mcnick: str = self.ctx.author.nick if self.ctx.author.nick else self.ctx.author.user.username
-    
-    async def _check_nick(self):
-        if not self.check_msg == self.mcnick:
-            raise VerificationError(MSG_UNVERIFY_CANCEL)
-    
-    async def _apply_unverify(self):
-        await self.ctx.author.add_role(role=NEWBIE_ROLE_ID, guild_id=GUILD_ID)
-        async with await pool.Connection() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(SQL_DELETE, (int(self.ctx.author.id), ))
-            await conn.commit()
-    
-    async def unverify(self):
-        try:
-            await self._get_profile()
-            await self._check_nick()
-            await self._apply_unverify()
-        except VerificationError as e:
-            return await self.ctx.send(e, ephemeral=True)
-        
-        return await self.ctx.send(MSG_UNVERIFY_SUCCESS.format(mcnick=self.mcnick), ephemeral=True)
-
-class ForceUnverifier(BaseUnverifier):
-    def __init__(self, ctx: interactions.CommandContext, user: interactions.Member):
-        self.ctx: interactions.CommandContext = ctx
-        self.user: interactions.Member = user
-    
-    async def _get_profile(self):
-        self.mcnick: str = self.user.nick if self.user.nick else self.user.user.username
-
-    async def _apply_unverify(self):
-        await self.user.add_role(role=NEWBIE_ROLE_ID, guild_id=GUILD_ID)
-        async with await pool.Connection() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(SQL_DELETE, (int(self.user.id), ))
-            await conn.commit()
-    
-    async def unverify(self):
-        try:
-            await self._get_profile()
-            await self._apply_unverify()
-        except VerificationError as e:
-            return await self.ctx.send(e, ephemeral=True)
-        
-        return await self.ctx.send(MSG_UNVERIFY_SUCCESS.format(mcnick=self.mcnick), ephemeral=True)
-
-class Profile(metaclass=ABCMeta):
-    @abstractmethod
-    def __init__(self, ctx: interactions.CommandContext, *args):
-        pass
-
-    @abstractmethod
-    async def _get_profile(self):
-        pass
-
-    async def _get_name_history(self):
-        name_history = ""
-        for data in MojangAPI.get_name_history(self.uuid):
-            if data['changed_to_at'] == 0:
-                changed_time = "계정 생성"
-            else:
-                changed_time = time.strftime(f"%Y.%m.%d. %H:%M:%S", time.localtime(data['changed_to_at'] // 1000))
-            name_history = name_history + f"`{data['name']}` ({changed_time})\n"
-
-        self.name_history: str = name_history
-
-    async def _set_msg(self):
-        self.skin: str = f"[바로가기]({self.profile.skin_url})"
-        self.cape: str = f"[바로가기]({self.profile.cape_url})" if self.profile.cape_url else "없음"
-
-    async def _send_profile(self):
-        return await self.ctx.send(embeds=interactions.Embed(
-            author=interactions.EmbedAuthor(
-                name=f"{self.profile.name}",
-                icon_url=f"https://mc-heads.net/head/{self.uuid}"
-            ),
-            thumbnail=interactions.EmbedImageStruct(
-                url=f"https://mc-heads.net/body/{self.uuid}"
-            ),
-            color=EMBED_COLOR,
-            fields=[
-                interactions.EmbedField(
-                    name="UUID",
-                    value=self.uuid
-                ),
-                interactions.EmbedField(
-                    name="닉네임 변경 내역",
-                    value=self.name_history
-                ),
-                interactions.EmbedField(
-                    name=f"스킨 ({self.profile.skin_model})",
-                    value=self.skin,
-                    inline=True
-                ),
-                interactions.EmbedField(
-                    name="망토",
-                    value=self.cape,
-                    inline=True
-                )
-            ],
-            footer=interactions.EmbedFooter(
-                text=get_footer()
-            )
-        ))
-
-    async def construct(self):
-        try:
-            await self._get_profile()
-            await self._get_name_history()
-            await self._set_msg()
-        except ProfileError as e:
-            return await self.ctx.send(e, ephemeral=True)
-        
-        return await self._send_profile()
-
-class UUIDProfile(Profile):
-    def __init__(self, ctx: interactions.CommandContext, uuid: str):
-        self.uuid: str = uuid
-
-    async def _get_profile(self):
-        self.profile = MojangAPI.get_profile(self.uuid)
-        if not UUID_REGEX_CODE.match(self.uuid) or not self.profile:
-            raise ProfileError(MSG_INVALID_UUID)
-
-
-class NameProfile(Profile):
-    def __init__(self, ctx: interactions.CommandContext, name: str):
-        self.name: str = name
-        
-    async def _get_profile(self):
-        uuid = MojangAPI.get_uuid(self.name)
-        if not uuid:
-            raise ProfileError(MSG_INVALID_NAME)
-        self.uuid: str = '-'.join([uuid[:8], uuid[8:12], uuid[12:16], uuid[16:20], uuid[20:]])
-        self.profile = MojangAPI.get_profile(self.uuid)
 
 @bot.command(
     name="verify",
@@ -366,9 +99,31 @@ async def verify(ctx: interactions.CommandContext):
     await ctx.popup(modal)
 
 @bot.modal("modal_verify")
-async def verify_response(ctx: interactions.CommandContext, mcnick: str, code: str):
-    verifier = Verifier(ctx, mcnick, code)
-    await verifier.verify()
+async def verify_response(ctx: interactions.CommandContext, mcnick: str, code: str):    
+    if not REGEX_CODE.match(code):
+        return await ctx.send(MSG_INVALID_CODE, ephemeral=True)
+    
+    if rd.exists(mcnick):
+        realcode = rd.hget(mcnick, "code").decode("UTF-8")
+        uuid = rd.hget(mcnick, "UUID").decode("UTF-8")
+        async with await pool.Connection() as conn:
+            async with conn.cursor() as cur:
+                if await cur.execute(SQL_CHECK_DUPLICATE, (uuid, )):
+                    return await ctx.send(MSG_VERIFY_ALREADY.format(mcnick=mcnick), ephemeral=True)
+                if await cur.execute(SQL_CHECK_BLACK, (uuid, )):
+                    return await ctx.send(MSG_VERIFY_BANNED.format(mcnick=mcnick), ephemeral=True)
+        if realcode == code:
+            await ctx.author.modify(nick=mcnick, guild_id=GUILD_ID)
+            await ctx.author.remove_role(role=NEWBIE_ROLE_ID, guild_id=GUILD_ID)
+            async with await pool.Connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(SQL_INSERT, (int(ctx.author.id), uuid))
+                await conn.commit()
+            await ctx.send(MSG_VERIFY_SUCCESS.format(mcnick=mcnick), ephemeral=True)
+        else:
+            await ctx.send(MSG_VERIFY_FAIL, ephemeral=True)
+    else:
+        await ctx.send(MSG_INVALID_NAME, ephemeral=True)
 
 @bot.command(
     name="unverify",
@@ -388,7 +143,7 @@ async def unverify(ctx: interactions.CommandContext):
                 label="인증을 해제하시려면 본인의 닉네임을 정확히 입력해주세요.",
                 custom_id="check_msg",
                 required=True,
-                placeholder=ctx.author.nick if ctx.author.nick else ctx.author.user.username
+                placeholder=get_nickname(ctx.author)
             )
         ]
     )
@@ -397,8 +152,16 @@ async def unverify(ctx: interactions.CommandContext):
 
 @bot.modal("modal_unverify")
 async def unverify_response(ctx: interactions.CommandContext, check_msg: str):
-    unverifier = Unverifier(ctx, check_msg)
-    await unverifier.unverify()
+    nick = get_nickname(ctx.author)
+    if not check_msg == nick:
+        return await ctx.send(MSG_UNVERIFY_CANCEL, ephemeral=True)
+    
+    await ctx.author.add_role(role=NEWBIE_ROLE_ID, guild_id=GUILD_ID)
+    async with await pool.Connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(SQL_DELETE, (int(ctx.author.id), ))
+        await conn.commit()
+    await ctx.send(MSG_UNVERIFY_SUCCESS.format(mcnick=nick), ephemeral=True)
 
 @bot.command(
     name="force_verify",
@@ -421,8 +184,26 @@ async def unverify_response(ctx: interactions.CommandContext, check_msg: str):
     ]
 )
 async def force_verify(ctx: interactions.CommandContext, user: interactions.Member, mcnick: str):
-    verifier = ForceVerifier(ctx, user, mcnick)
-    await verifier.verify()
+    uuid = MojangAPI.get_uuid(mcnick)
+    if not uuid:
+        return await ctx.send(MSG_INVALID_NAME, ephemeral=True)
+    uuid = '-'.join([uuid[:8], uuid[8:12], uuid[12:16], uuid[16:20], uuid[20:]])
+    mcnick = MojangAPI.get_username(uuid)
+    
+    async with await pool.Connection() as conn:
+        async with conn.cursor() as cur:
+            if await cur.execute(SQL_CHECK_DUPLICATE, (uuid, )):
+                return await ctx.send(MSG_VERIFY_ALREADY.format(mcnick=mcnick), ephemeral=True)
+            if await cur.execute(SQL_CHECK_BLACK, (uuid, )):
+                return await ctx.send(MSG_VERIFY_BANNED.format(mcnick=mcnick), ephemeral=True)
+            
+    await user.modify(nick=mcnick, guild_id=GUILD_ID)
+    await user.remove_role(role=NEWBIE_ROLE_ID, guild_id=GUILD_ID)
+    async with await pool.Connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(SQL_INSERT, (int(user.id), uuid))
+        await conn.commit()
+    await ctx.send(MSG_VERIFY_SUCCESS.format(mcnick=mcnick), ephemeral=True)
     
 @bot.command(
     name="force_unverify",
@@ -439,8 +220,17 @@ async def force_verify(ctx: interactions.CommandContext, user: interactions.Memb
     ]
 )
 async def force_unverify(ctx: interactions.CommandContext, user: interactions.Member):
-    unverifier = ForceUnverifier(ctx, user)
-    await unverifier.unverify()
+    if NEWBIE_ROLE_ID in user.roles:
+        return await ctx.send(MSG_UNVERIFY_FAIL, ephemeral=True)
+    
+    mcnick = get_nickname(user)
+    
+    await user.add_role(role=NEWBIE_ROLE_ID, guild_id=GUILD_ID)
+    async with await pool.Connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(SQL_DELETE, (int(user.id), ))
+        await conn.commit()
+    await ctx.send(MSG_UNVERIFY_SUCCESS.format(mcnick=mcnick), ephemeral=True)
 
 @bot.command(
     name="update",
@@ -454,7 +244,7 @@ async def update(ctx: interactions.CommandContext):
             uuid = cur.fetchone()[1]
     
     name = MojangAPI.get_username(uuid)
-    nick = ctx.author.nick if ctx.author.nick else ctx.author.user.username
+    nick = get_nickname(ctx.author)
     
     if not name:
         return await ctx.send(MSG_UPDATE_FAIL, ephemeral=True)
@@ -701,10 +491,59 @@ async def query(ctx: interactions.CommandContext, ip: str = None):
 )
 async def profile(ctx: interactions.CommandContext, sub_command: str, uuid: str = None, name: str = None):
     if sub_command == "uuid":
-        profile = UUIDProfile(ctx, uuid)
+        profile = MojangAPI.get_profile(uuid)
+        if not UUID_REGEX_CODE.match(uuid) or not profile:
+            return await ctx.send(MSG_INVALID_UUID, ephemeral=True)
     elif sub_command == "name":
-        profile = NameProfile(ctx, name)
+        uuid = MojangAPI.get_uuid(name)
+        if not uuid:
+            return await ctx.send(MSG_INVALID_NAME, ephemeral=True)
+        uuid = '-'.join([uuid[:8], uuid[8:12], uuid[12:16], uuid[16:20], uuid[20:]])
     
-    await profile.construct()
+    profile = MojangAPI.get_profile(uuid)
+    
+    name_history = ""
+    for data in MojangAPI.get_name_history(uuid):
+        if data['changed_to_at'] == 0:
+            changed_time = "계정 생성"
+        else:
+            changed_time = time.strftime(f"%Y.%m.%d. %H:%M:%S", time.localtime(data['changed_to_at'] // 1000))
+        name_history = name_history + f"`{data['name']}` ({changed_time})\n"
+
+    cape = f"[바로가기]({profile.cape_url})" if profile.cape_url else "없음"
+    
+    await ctx.send(embeds=interactions.Embed(
+        author=interactions.EmbedAuthor(
+            name=f"{profile.name}",
+            icon_url=f"https://mc-heads.net/head/{uuid}"
+        ),
+        thumbnail=interactions.EmbedImageStruct(
+            url=f"https://mc-heads.net/body/{uuid}"
+        ),
+        color=EMBED_COLOR,
+        fields=[
+            interactions.EmbedField(
+                name="UUID",
+                value=uuid
+            ),
+            interactions.EmbedField(
+                name="닉네임 변경 내역",
+                value=name_history
+            ),
+            interactions.EmbedField(
+                name=f"스킨 ({profile.skin_model})",
+                value=f"[바로가기]({profile.skin_url})",
+                inline=True
+            ),
+            interactions.EmbedField(
+                name="망토",
+                value=cape,
+                inline=True
+            )
+        ],
+        footer=interactions.EmbedFooter(
+            text=get_footer()
+        )
+    ))
 
 bot.start()
